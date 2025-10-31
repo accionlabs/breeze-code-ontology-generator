@@ -1,0 +1,25 @@
+{
+  "name": "treesitter",
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "postinstall": "patch-package && npm rebuild tree-sitter-perl"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "description": "",
+  "dependencies": {
+    "express": "^5.1.0",
+    "glob": "^11.0.3",
+    "neo4j-driver": "^6.0.0",
+    "tree-sitter": "^0.21.1",
+    "tree-sitter-perl": "github:tree-sitter-perl/tree-sitter-perl#release",
+    "web-tree-sitter": "^0.25.10"
+  },
+  "devDependencies": {
+    "patch-package": "^8.0.1"
+  }
+}
