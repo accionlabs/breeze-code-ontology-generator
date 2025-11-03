@@ -139,8 +139,28 @@ RETURN f
 - Update credentials in `config/config.json` instead of editing scripts.
 - The parser assumes standard Perl module naming conventions (`Package::SubPackage → Package/SubPackage.pm`).
 
----
 
-## 📄 License
+## Generating local connected grraphs community
 
-This project is licensed under the MIT License.
+Run these queries in neo4jDB
+
+// Drop any existing graph with the same name to avoid conflict
+CALL gds.graph.drop('importsGraph', false) YIELD graphName;
+
+// Create a new graph projection
+CALL gds.graph.project(
+  'importsGraph',
+  'File',                   // node label
+  {
+    IMPORTS: {
+      type: 'IMPORTS',
+      orientation: 'UNDIRECTED' // Louvain works best on undirected graphs
+    }
+  }
+);
+
+CALL gds.louvain.write('importsGraph', {
+  writeProperty: 'communityId'
+})
+YIELD communityCount, modularity, modularities;
+
