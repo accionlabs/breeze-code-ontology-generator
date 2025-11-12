@@ -115,6 +115,14 @@ function extractImports(filePath, parser) {
 }
 
 // -------------------------------------------------------------
+// Helper: count lines of code
+// -------------------------------------------------------------
+function countLinesOfCode(filePath) {
+  const content = fs.readFileSync(filePath, "utf8");
+  return content.split("\n").length;
+}
+
+// -------------------------------------------------------------
 // Step 3: Build package-to-path mapper
 // -------------------------------------------------------------
 function buildPackageMapper(repoPath) {
@@ -135,8 +143,8 @@ function buildPackageMapper(repoPath) {
     } catch (err) {
         console.log("Error analyzing file for mapper", file)
     }
-    
-    
+
+
   }
 
   return mapper;
@@ -170,8 +178,14 @@ function analyzeImports(repoPath, mapper) {
       }
     }
 
+    const relativePath = path.relative(repoPath, file);
+    const fileName = path.basename(file);
+    const loc = countLinesOfCode(file);
+
     results.push({
-      path: path.relative(repoPath, file),
+      path: relativePath,
+      name: fileName,
+      loc: loc,
       importFiles: [...new Set(importFiles)],
       externalImports: [...new Set(externalImports)],
       libPaths: [...new Set(libPaths)],
@@ -179,7 +193,7 @@ function analyzeImports(repoPath, mapper) {
     } catch (e) {
         console.log("error anakysing file", file)
     }
-    
+
   } 
 
   return results;
