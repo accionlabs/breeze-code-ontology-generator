@@ -10,14 +10,14 @@ const glob = require("glob");
 const Parser = require("tree-sitter");
 const Perl = require("tree-sitter-perl");
 
-if (process.argv.length < 5) {
-  console.error("Usage: node analyze-perl-imports.js <repoPath> <mapperOutput.json> <importsOutput.json>");
+if (process.argv.length < 4) {
+  console.error("Usage: node analyze-perl-imports.js <repoPath> <importsOutput.json>");
   process.exit(1);
 }
 
 const repoPath = path.resolve(process.argv[2]);
-const mapperOutput = path.resolve(process.argv[3]);
-const importsOutput = path.resolve(process.argv[4]);
+const mapperOutput = 'mapper.json'
+const importsOutput = path.resolve(process.argv[3]);
 
 // -------------------------------------------------------------
 // Initialize parser
@@ -207,9 +207,10 @@ function analyzeImports(repoPath, mapper) {
 
   const mapper = buildPackageMapper(repoPath);
   fs.writeFileSync(mapperOutput, JSON.stringify(mapper, null, 2));
-  console.log(`✅ Package mapper saved to ${mapperOutput}`);
+  // console.log(`✅ Package mapper saved to ${mapperOutput}`);
 
   const analysis = analyzeImports(repoPath, mapper);
   fs.writeFileSync(importsOutput, JSON.stringify(analysis, null, 2));
   console.log(`✅ Imports analysis saved to ${importsOutput}`);
+  fs.unlinkSync(mapperOutput)
 })();
