@@ -12,8 +12,37 @@ The tool operates in **three stages**:
    - Supports OpenAI, Claude (Anthropic), Google Gemini, and custom/private LLMs
    - Adds descriptions to the dependency tree JSON
 
-3. **Graph Migration to Neo4j**
-   Reads the generated dependency JSON and imports it into Neo4j, using a configuration file for DB connection.
+3. **Import JSON Using Breeze Code Ontology UI**
+  1. Create an Ontology
+   In the UI:Code Ontology → Create new Ontology
+   Provide:
+    Ontology Name
+    Programming Language
+    Optional metadata
+    This ontology will hold one or more repositories.
+
+  2. generate description (Optional)
+  This step will generate natural-language descriptions for your codebase using OpenAI.
+  The CLI will print a command that you can run locally to generate the description JSON file.
+
+  3. Upload Generated JSON File
+    Open the ontology and click: Upload JSON File
+    Select your:file-dependency-tree.json
+
+    Breeze will:
+        Parse the JSON
+        Create Neo4j nodes & relationships
+        Attach data under the ontology ID
+        Handle multiple repositories
+        Automatically manage indexing & constraints
+
+    Explore the Graph
+      Once imported, the UI enables:
+        Interactive graph visualization
+        Dependency traversal
+        Cluster/community analysis
+        Metrics & insights
+        Filtering by repo, file, module, dependencies
 
 ---
 
