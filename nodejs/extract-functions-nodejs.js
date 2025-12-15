@@ -31,29 +31,135 @@ function extractFunctionsWithCalls(filePath, repoPath = null) {
   return functions;
 }
 
-// ---------------------------------------------------------
-// Extract a single function info
-// ---------------------------------------------------------
 function extractFunctionInfo(node, filePath, repoPath = null) {
   const startLine = node.startPosition.row + 1;
   const endLine = node.endPosition.row + 1;
-  const type = node.type;
 
   const name = getFunctionName(node);
+  const params = extractFunctionParams(node);
   const calls = extractDirectCalls(node);
 
-  // Convert to relative path if repoPath is provided
+  const { visibility, kind } = getFunctionModifiers(node);
+
   const relativePath = repoPath ? path.relative(repoPath, filePath) : filePath;
 
   return {
     name,
-    type,
+    type: node.type,
+    visibility,
+    kind,
+    params,
     startLine,
     endLine,
     path: relativePath,
     calls
   };
 }
+
+function getFunctionModifiers(node) {
+  const parent = node.parent;
+
+  // Free-standing functions
+  if (!parent || parent.type !== "method_definition") {
+    return {
+      visibility: "public",
+      kind: "function"
+    };
+  }
+
+  const nameNode = parent.childForFieldName("name");
+
+  const visibility =
+    nameNode?.type === "private_property_identifier"
+      ? "private"
+      : "public";
+
+  const isStatic = parent.childForFieldName("static") !== null;
+
+  return {
+    visibility,
+    kind: isStatic ? "static" : "instance"
+  };
+}
+
+
+
+/* =========================================================
+   Parameter extraction (callback-safe)
+   ========================================================= */
+
+function extractFunctionParams(node) {
+  const paramsNode = node.childForFieldName("parameters");
+  if (!paramsNode) return [];
+
+  const params = [];
+
+  for (let i = 0; i < paramsNode.childCount; i++) {
+    const child = paramsNode.child(i);
+
+    if (!child.isNamed) continue;
+
+    // Ignore inline callback / function parameters
+    if (containsFunction(child)) continue;
+
+    params.push(extractParamName(child));
+  }
+
+  return params;
+}
+
+/* =========================================================
+   Callback detection (AST driven)
+   ========================================================= */
+
+function containsFunction(node) {
+  if (
+    node.type === "function_expression" ||
+    node.type === "arrow_function" ||
+    node.type === "function_declaration"
+  ) {
+    return true;
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child.isNamed && containsFunction(child)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/* =========================================================
+   Parameter name normalization
+   ========================================================= */
+
+function extractParamName(node) {
+  switch (node.type) {
+    case "identifier":
+      return node.text;
+
+    case "assignment_pattern":
+      // a = 1
+      return extractParamName(node.child(0));
+
+    case "rest_pattern":
+      // ...args
+      return "..." + extractParamName(node.child(1));
+
+    case "object_pattern":
+      return "{...}";
+
+    case "array_pattern":
+      return "[...]";
+
+    default:
+      return node.text;
+  }
+}
+
+
 
 // ---------------------------------------------------------
 // Identify function name (decl, expression, arrow, method)
@@ -84,36 +190,6 @@ function getFunctionName(node) {
 // Extract DIRECT calls inside function body
 // Ignore callback functions inside argument lists
 // ---------------------------------------------------------
-// function extractDirectCalls(funcNode) {
-//   const calls = [];
-
-//   traverse(funcNode, (node, parent) => {
-//     if (node.type !== "call_expression") return;
-
-//     // Ignore callback: call used as argument of another call
-//     if (parent && parent.type === "arguments") return;
-
-//     const func = node.childForFieldName("function");
-
-//     if (!func) return;
-
-//     // identifier: foo()
-//     if (func.type === "identifier") {
-//       calls.push({ name: func.text, path: null, objectName: null, type: func.type });
-//       return;
-//     }
-
-//     // member_expression: obj.foo()
-//     if (func.type === "member_expression") {
-//       const prop = func.childForFieldName("property");
-//       const objectProp = func.childForFieldName("object")
-//       if (prop) calls.push({ name: prop.text, path: null, objectName: !!objectProp ? objectProp.text : null, type: func.type });
-//       return;
-//     }
-//   });
-
-//   return calls;
-// }
 
 function extractDirectCalls(funcNode) {
   const calls = [];

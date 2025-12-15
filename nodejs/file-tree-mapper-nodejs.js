@@ -10,6 +10,7 @@ const glob = require("glob");
 const Parser = require("tree-sitter");
 const JavaScript = require("tree-sitter-javascript");
 const { extractFuncitonAndItsCalls } = require("./extract-functions-nodejs");
+const { extractClasses } = require("./extract-classes-nodejs");
 
 if (process.argv.length < 4) {
   console.error(
@@ -167,11 +168,14 @@ function analyzeImports(repoPath, mapper) {
       // Extract functions for this file
       const functions = extractFuncitonAndItsCalls(file, repoPath);
 
+      const classes = extractClasses(file, repoPath)
+
       results.push({
         path: path.relative(repoPath, file),
         importFiles: [...new Set(importFiles)],
         externalImports: [...new Set(externalImports)],
-        functions: functions
+        functions: functions,
+        classes
       });
     } catch (e) {
       process.stdout.write('\n');

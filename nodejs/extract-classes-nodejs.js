@@ -1,0 +1,195 @@
+
+const Parser = require("tree-sitter");
+const JavaScript = require("tree-sitter-javascript");
+const fs = require("fs");
+const path = require("path");
+
+function extractClasses(filePath, repoPath = null) {
+  const source = fs.readFileSync(filePath, "utf8");
+
+  const parser = new Parser();
+  parser.setLanguage(JavaScript);
+
+  const tree = parser.parse(source);
+
+  const classes = [];
+
+  traverse(tree.rootNode, (node) => {
+      const classInfo = extractClassInfo(node, filePath, repoPath);
+      // Filter out classes with null names
+      if (classInfo?.name) {
+        classes.push(classInfo);
+      }
+  });
+
+  return classes;
+}
+
+function traverse(node, cb, parent = null) {
+  cb(node, parent);
+  for (let i = 0; i < node.childCount; i++) {
+    traverse(node.child(i), cb, node);
+  }
+}
+
+/* =========================================================
+   Class extraction (JavaScript – Tree-sitter)
+   ========================================================= */
+
+function extractClassInfo(node, filePath, repoPath = null) {
+  if (node.type !== "class_declaration" && node.type !== "class") {
+    return null;
+  }
+
+  const name = getClassName(node);
+  const superClass = getSuperClassName(node);
+
+  const {
+    constructorParams,
+    methodNames
+  } = extractClassMembers(node);
+
+   const relativePath = repoPath ? path.relative(repoPath, filePath) : filePath;
+
+  return {
+    name,
+    extends: superClass,
+    constructorParams,
+    methods: methodNames,
+    path: relativePath
+  };
+}
+
+/* =========================================================
+   Class name
+   ========================================================= */
+
+function getClassName(node) {
+  // class Foo {}
+  const id = node.childForFieldName("name");
+  return id ? id.text : null; // anonymous allowed
+}
+
+/* =========================================================
+   Superclass
+   ========================================================= */
+
+function getSuperClassName(node) {
+  const superNode = node.childForFieldName("superclass");
+  return superNode ? superNode.text : null;
+}
+
+/* =========================================================
+   Class members
+   ========================================================= */
+
+function extractClassMembers(classNode) {
+  const body = classNode.childForFieldName("body");
+  if (!body) {
+    return { constructorParams: [], methodNames: [] };
+  }
+
+  const methodNames = [];
+  let constructorParams = [];
+
+  for (let i = 0; i < body.childCount; i++) {
+    const member = body.child(i);
+    if (!member.isNamed) continue;
+
+    // constructor() {}
+    if (
+      member.type === "method_definition" &&
+      isConstructor(member)
+    ) {
+      const fnNode = member.childForFieldName("value");
+      if (fnNode) {
+        constructorParams = extractFunctionParams(fnNode);
+      }
+      continue;
+    }
+
+    // regular methods
+    if (member.type === "method_definition") {
+      const nameNode = member.childForFieldName("name");
+      if (nameNode) {
+        methodNames.push(nameNode.text);
+      }
+    }
+  }
+
+  return { constructorParams, methodNames };
+}
+
+/* =========================================================
+   Constructor detection
+   ========================================================= */
+
+function isConstructor(methodNode) {
+  const nameNode = methodNode.childForFieldName("name");
+  return nameNode?.text === "constructor";
+}
+
+/* =========================================================
+   Parameter extraction (same callback-safe logic)
+   ========================================================= */
+
+function extractFunctionParams(node) {
+  const paramsNode = node.childForFieldName("parameters");
+  if (!paramsNode) return [];
+
+  const params = [];
+
+  for (let i = 0; i < paramsNode.childCount; i++) {
+    const child = paramsNode.child(i);
+    if (!child.isNamed) continue;
+
+    if (containsFunction(child)) continue;
+
+    params.push(extractParamName(child));
+  }
+
+  return params;
+}
+
+function containsFunction(node) {
+  if (
+    node.type === "function_expression" ||
+    node.type === "arrow_function" ||
+    node.type === "function_declaration"
+  ) {
+    return true;
+  }
+
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child.isNamed && containsFunction(child)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function extractParamName(node) {
+  switch (node.type) {
+    case "identifier":
+      return node.text;
+
+    case "assignment_pattern":
+      return extractParamName(node.child(0));
+
+    case "rest_pattern":
+      return "..." + extractParamName(node.child(1));
+
+    case "object_pattern":
+      return "{...}";
+
+    case "array_pattern":
+      return "[...]";
+
+    default:
+      return node.text;
+  }
+}
+
+module.exports = { extractClasses }
