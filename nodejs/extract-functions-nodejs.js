@@ -41,7 +41,7 @@ function extractFunctionInfo(node, filePath, repoPath = null) {
 
   const { visibility, kind } = getFunctionModifiers(node);
 
-  const relativePath = repoPath ? path.relative(repoPath, filePath) : filePath;
+  // const relativePath = repoPath ? path.relative(repoPath, filePath) : filePath;
 
   return {
     name,
@@ -51,7 +51,7 @@ function extractFunctionInfo(node, filePath, repoPath = null) {
     params,
     startLine,
     endLine,
-    path: relativePath,
+    // path: relativePath,
     calls
   };
 }

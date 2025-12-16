@@ -41,6 +41,9 @@ function extractClassInfo(node, filePath, repoPath = null) {
     return null;
   }
 
+  const startLine = node.startPosition.row + 1;
+  const endLine = node.endPosition.row + 1;
+
   const name = getClassName(node);
   const superClass = getSuperClassName(node);
 
@@ -49,14 +52,16 @@ function extractClassInfo(node, filePath, repoPath = null) {
     methodNames
   } = extractClassMembers(node);
 
-   const relativePath = repoPath ? path.relative(repoPath, filePath) : filePath;
+//    const relativePath = repoPath ? path.relative(repoPath, filePath) : filePath;
 
   return {
     name,
     extends: superClass,
     constructorParams,
     methods: methodNames,
-    path: relativePath
+    startLine,
+    endLine
+    // path: relativePath
   };
 }
 
