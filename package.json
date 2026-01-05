@@ -4,11 +4,16 @@
   "main": "index.js",
   "scripts": {
     "start": "node index.js",
+    "generate-tree": "node index.js",
+    "generate-descriptions": "node generate-file-descriptions.js",
+    "add-metadata": "node add-metadata.js",
     "test": "echo \"Error: no test specified\" && exit 1",
     "postinstall": "node install-safe.js"
   },
   "bin": {
-    "repo-to-json-tree": "./index.js"
+    "repo-to-json-tree": "./index.js",
+    "generate-descriptions": "./generate-file-descriptions.js",
+    "add-metadata": "./add-metadata.js"
   },
   "keywords": [],
   "author": "",
