@@ -14,6 +14,8 @@ const { extractClasses: extractClassesTS } = require("./extract-classes-typescri
 // Import JavaScript parsers for .js/.jsx files
 const { extractFuncitonAndItsCalls: extractFunctionsJS } = require("../nodejs/extract-functions-nodejs");
 const { extractClasses: extractClassesJS } = require("../nodejs/extract-classes-nodejs");
+const { loadPathAliases, resolveWithAlias } = require("./resolve-path-aliases");
+
 
 const Parser = require("tree-sitter");
 const JavaScript = require("tree-sitter-javascript");
@@ -31,6 +33,10 @@ if (process.argv.length < 4) {
 
 const repoPath = path.resolve(process.argv[2]);
 const importsOutput = path.resolve(process.argv[3]);
+
+// Load path aliases from tsconfig.json
+const pathAliases = loadPathAliases(repoPath);
+
 
 // -------------------------------------------------------------
 // Helper functions for Tree-sitter traversal (for JS files)
@@ -174,6 +180,16 @@ function analyzeFiles() {
         const importSource = imp.source;
         let resolvedPath = null;
         let isResolved = false;
+
+         // 1. Try path aliases first (e.g., @services/api.service)
+        if (Object.keys(pathAliases).length > 0) {
+          resolvedPath = resolveWithAlias(importSource, pathAliases, repoPath);
+          if (resolvedPath) {
+            importFiles.push(resolvedPath);
+            isResolved = true;
+            return;
+          }
+        }
 
         // Handle relative imports (./file or ../file)
         if (importSource.startsWith(".")) {
