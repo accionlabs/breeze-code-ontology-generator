@@ -56,7 +56,11 @@ function extractClassInfo(node, filePath, repoPath = null) {
 
   return {
     name,
+    type: "class", // JavaScript only has classes, not interfaces
+    visibility: "public", // JavaScript doesn't have visibility modifiers
+    isAbstract: false, // JavaScript doesn't have abstract keyword
     extends: superClass,
+    implements: [], // JavaScript doesn't have implements keyword
     constructorParams,
     methods: methodNames,
     startLine,
