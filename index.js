@@ -19,7 +19,7 @@ const args = minimist(process.argv.slice(2), {
   }
 });
 
-const allowedLanguages = ["perl", "javascript", "python", "java", "typescript"];
+const allowedLanguages = ["perl", "javascript", "python", "java", "typescript", "salesforce"];
 
 const language = (args.language || "").toLowerCase();
 const repoPath = args.repo ? path.resolve(args.repo) : null;
@@ -36,12 +36,14 @@ if (!language || !repoPath || !outputDir) {
       `  javascript          - Parse JavaScript files (.js, .jsx)\n` +
       `  typescript          - Parse TypeScript AND JavaScript files (.ts, .tsx, .js, .jsx)\n` +
       `  python              - Parse Python files (.py)\n` +
-      `  java                - Parse Java files (.java)\n\n` +
+      `  java                - Parse Java files (.java)\n` +
+      `  salesforce          - Parse Salesforce (Apex, Triggers, Aura, Flows, Metadata)\n` +
+      `                        Use --api-key for AI-enhanced hybrid parsing (optional)\n\n` +
       `Options:\n` +
       `  --generate-descriptions     Generate AI descriptions for files, classes, and functions\n` +
       `  --add-metadata             Add metadata using LLM analysis\n` +
       `  --provider <name>          LLM provider: openai, claude, gemini, custom (default: openai)\n` +
-      `  --api-key <key>            API key for LLM provider\n` +
+      `  --api-key <key>            API key for LLM provider (also used for Salesforce hybrid mode)\n` +
       `  --model <name>             Model name (optional)\n` +
       `  --api-url <url>            Custom API URL (for custom provider)\n` +
       `  --mode <low|high>          Accuracy mode for metadata (default: low)\n` +
@@ -72,6 +74,7 @@ const scriptMap = {
   python: "python/file-tree-mapper-python.js",
   java: "java/file-tree-main-java.js",
   typescript: "typescript/file-tree-mapper-typescript.js",
+  salesforce: "salesforce-hybrid-analysis/file-tree-mapper-complete.js",
 };
 
 // Inform user about TypeScript's JavaScript support
@@ -79,10 +82,25 @@ if (language === "typescript") {
   console.log("\n📝 Note: TypeScript mode will also parse JavaScript files (.js, .jsx)");
 }
 
+// Inform user about Salesforce hybrid parsing
+if (language === "salesforce") {
+  if (args["api-key"]) {
+    console.log("\n🤖 Note: Salesforce hybrid mode - Using AI enhancement for complex files");
+  } else {
+    console.log("\n📝 Note: Salesforce regex mode - Add --api-key for AI-enhanced parsing");
+  }
+}
+
 try {
   const scriptPath = path.resolve(__dirname, scriptMap[language]);
 
-  const command = `node "${scriptPath}" "${repoPath}" "${importsOutput}"`;
+  // Build command - Salesforce needs optional API key
+  let command = `node "${scriptPath}" "${repoPath}" "${importsOutput}"`;
+  
+  // For Salesforce, add API key if provided (for AI enhancement)
+  if (language === "salesforce" && args["api-key"]) {
+    command += ` "${args["api-key"]}"`;
+  }
 
   console.log("\n🚀 Running command:");
   console.log(command);

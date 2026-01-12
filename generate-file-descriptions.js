@@ -132,7 +132,11 @@ class LLMProvider {
     const classes = fileData.classes || [];
     const functions = fileData.functions || [];
 
-    let prompt = `You are a code analyst. Analyze this code file and generate descriptions for the file, all classes, and all functions.
+    let prompt;
+    
+    if (fileContent) {
+      // Original mode: Use actual file content
+      prompt = `You are a code analyst. Analyze this code file and generate descriptions for the file, all classes, and all functions.
 
 File: ${filePath}
 
@@ -167,6 +171,42 @@ RULES:
 6. Return ONLY valid JSON, no markdown, no explanations
 
 Respond with ONLY the JSON object.`;
+    } else {
+      // Fallback mode: Use extracted metadata when file content not available
+      prompt = `You are a code analyst. Based on the extracted metadata below, generate descriptions for the file, all classes, and all functions.
+
+File: ${filePath}
+
+Extracted Metadata:
+${JSON.stringify(fileData, null, 2).substring(0, 2000)}
+
+STRUCTURE:
+- Classes: ${classes.map(c => c.name).join(', ') || 'None'}
+- Functions: ${functions.map(f => f.name).join(', ') || 'None'}
+
+Generate a JSON response with the following format:
+{
+  "file": "Brief description of the file (2-3 sentences, 50-100 words)",
+  "classes": {
+    "ClassName1": "Brief description of what this class does (1-2 sentences)",
+    "ClassName2": "..."
+  },
+  "functions": {
+    "functionName1": "Brief description of what this function does (1-2 sentences)",
+    "functionName2": "..."
+  }
+}
+
+RULES:
+1. Keep descriptions concise and focused
+2. Describe purpose and functionality, not implementation details
+3. Use present tense
+4. NO code snippets, NO formatting, just plain text descriptions
+5. If a class or function name is not in the metadata, skip it
+6. Return ONLY valid JSON, no markdown, no explanations
+
+Respond with ONLY the JSON object.`;
+    }
 
     return prompt;
   }
@@ -388,26 +428,47 @@ async function processFiles(config) {
         }
 
         try {
-          // Check if file exists
-          if (!fs.existsSync(fullPath)) {
-            console.log(`⚠️  File not found: ${relativePath}`);
-            skipped++;
-            return fileEntry;
+          // Try to read file content
+          let content = null;
+          let fileExists = fs.existsSync(fullPath);
+          
+          if (fileExists) {
+            try {
+              // Check file size
+              const stats = fs.statSync(fullPath);
+              if (stats.size > maxFileSizeBytes) {
+                console.log(`⏭️  Skipping large file: ${relativePath} (${Math.round(stats.size / 1024)}KB)`);
+                skipped++;
+                return fileEntry;
+              }
+              
+              // Read file content
+              content = fs.readFileSync(fullPath, "utf8");
+            } catch (err) {
+              console.warn(`⚠️  Could not read file: ${relativePath}`);
+              fileExists = false;
+            }
           }
 
-          // Check file size
-          const stats = fs.statSync(fullPath);
-          if (stats.size > maxFileSizeBytes) {
-            console.log(`⏭️  Skipping large file: ${relativePath} (${Math.round(stats.size / 1024)}KB)`);
-            skipped++;
-            return fileEntry;
+          // If file doesn't exist, check if we have meaningful metadata
+          if (!fileExists && !content) {
+            const hasMetadata = (fileEntry.classes && fileEntry.classes.length > 0) || 
+                               (fileEntry.functions && fileEntry.functions.length > 0) || 
+                               (fileEntry.methods && fileEntry.methods.length > 0) ||
+                               (fileEntry.variables && fileEntry.variables.length > 0);
+            
+            if (!hasMetadata) {
+              console.log(`⚠️  File not found and no metadata: ${relativePath}`);
+              skipped++;
+              return fileEntry;
+            }
+            
+            console.log(`🔍 Processing from metadata: ${relativePath}`);
+          } else {
+            console.log(`🔍 Processing from file content: ${relativePath}`);
           }
 
-          // Read file content
-          const content = fs.readFileSync(fullPath, "utf8");
-
-          // Generate descriptions
-          console.log(`🔍 Processing: ${relativePath}`);
+          // Generate descriptions (with file content OR metadata)
           const descriptions = await provider.generateDescriptions(relativePath, content, fileEntry);
 
           processed++;

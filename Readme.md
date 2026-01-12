@@ -15,6 +15,32 @@ npx github:accionlabs/breeze-code-ontology-generator repo-to-json-tree \
 
 ---
 
+## ⚡ Salesforce Support
+
+Parse Salesforce projects (Apex, Triggers, Aura, Flows, GenAI, Metadata). Use `--api-key` for AI-enhanced hybrid parsing:
+
+```bash
+# Basic usage
+npx github:accionlabs/breeze-code-ontology-generator repo-to-json-tree \
+  --language salesforce \
+  --repo ./my-salesforce-project \
+  --out ./output
+
+# With AI enhancement + descriptions + metadata
+npx github:accionlabs/breeze-code-ontology-generator repo-to-json-tree \
+  --language salesforce \
+  --repo ./my-salesforce-project \
+  --out ./output \
+  --api-key YOUR_OPENAI_API_KEY \
+  --generate-descriptions \
+  --add-metadata
+
+# Fix schema for import (final step)
+node salesforce-hybrid-analysis/fix-salesforce-json.js ./output/salesforce-imports.json
+```
+
+---
+
 ## 🧩 Overview
 
 The tool operates in **three stages**:
