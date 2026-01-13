@@ -318,7 +318,7 @@ if (require.main === module) {
     console.log(`✅ Final output written to → ${importsOutput}`);
 
     // DELETE TEMP FILE
-    // fs.unlinkSync(classIndexOutput);
+    fs.unlinkSync(classIndexOutput);
     console.log(`🗑️  Deleted temporary file: ${classIndexOutput}`);
   })();
 }
