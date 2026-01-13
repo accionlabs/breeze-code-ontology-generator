@@ -1,12 +1,11 @@
 #!/usr/bin/env node
 
+
 const minimist = require("minimist");
 const { execSync } = require("child_process");
 const path = require("path");
 const fs = require("fs");
 const { autoDetectAndProcess, generateDescriptions, addMetadata } = require("./main");
-
-const isWindows = process.platform === "win32";
 
 const args = minimist(process.argv.slice(2), {
   alias: {
@@ -106,30 +105,22 @@ const scriptMap = {
   typescript: "typescript/file-tree-mapper-typescript.js",
 };
 
+// Inform user about TypeScript's JavaScript support
+if (language === "typescript") {
+  console.log("\n📝 Note: TypeScript mode will also parse JavaScript files (.js, .jsx)");
+}
+
 try {
   const scriptPath = path.resolve(__dirname, scriptMap[language]);
 
-  // Check if the script exists
-  if (!fs.existsSync(scriptPath)) {
-    console.error(`❌ Script not found: ${scriptPath}`);
-    console.error(`   This might happen if native modules aren't built.`);
-    console.error(`   Try running: npm rebuild`);
-    process.exit(1);
-  }
-
   const command = `node "${scriptPath}" "${repoPath}" "${importsOutput}"`;
 
-  console.log("🚀 Running analysis...");
-  console.log(`   Language: ${language}`);
-  console.log(`   Repo: ${repoPath}`);
-  console.log(`   Output: ${importsOutput}`);
+  console.log("\n🚀 Running command:");
+  console.log(command);
 
-  execSync(command, { 
-    stdio: "inherit",
-    shell: isWindows ? "cmd.exe" : undefined 
-  });
+  execSync(command, { stdio: "inherit" });
 
-  console.log("\n✅ JSON tree generation finished!");
+  console.log("✅ JSON tree generation finished!");
   console.log("📄 Output:", importsOutput);
 
   // Step 2: Generate descriptions if requested
@@ -145,13 +136,6 @@ try {
   console.log("\n🎉 All tasks completed successfully!");
   console.log("📄 Final output:", importsOutput);
 } catch (err) {
-  console.error("\n❌ Analysis failed:", err.message);
-  if (err.stderr) {
-    console.error("Error details:", err.stderr.toString());
-  }
-  console.error("\n💡 Troubleshooting:");
-  console.error("   1. Make sure the repository path is correct");
-  console.error("   2. Check that tree-sitter modules are installed: npm rebuild");
-  console.error("   3. On Windows, try running in WSL or Git Bash if issues persist");
+  console.error("❌ Failed:", err.message);
   process.exit(1);
 }

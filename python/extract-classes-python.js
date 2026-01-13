@@ -47,46 +47,65 @@ function extractClassInfo(node, source) {
     });
   }
 
-  // Extract methods
+  // Extract methods (names only, matching TypeScript format)
   const methods = [];
+  let constructorParams = [];
   const bodyNode = node.childForFieldName("body");
   if (bodyNode) {
     traverse(bodyNode, (child) => {
       if (child.type === "function_definition" && child.parent === bodyNode) {
-        const methodInfo = extractMethodInfo(child, source);
-        if (methodInfo.name) {
-          methods.push(methodInfo);
+        const methodNameNode = child.childForFieldName("name");
+        const methodName = methodNameNode ? source.slice(methodNameNode.startIndex, methodNameNode.endIndex) : null;
+        if (methodName) {
+          methods.push(methodName);
+          
+          // Extract constructor params from __init__ method
+          if (methodName === "__init__") {
+            const paramsNode = child.childForFieldName("parameters");
+            if (paramsNode) {
+              traverse(paramsNode, (paramChild) => {
+                if (paramChild.type === "identifier" && paramChild.parent.type === "parameters") {
+                  const paramName = source.slice(paramChild.startIndex, paramChild.endIndex);
+                  if (paramName !== "self" && paramName !== "cls") {
+                    constructorParams.push(paramName);
+                  }
+                } else if (paramChild.type === "default_parameter") {
+                  const pNameNode = paramChild.childForFieldName("name");
+                  if (pNameNode) {
+                    const paramName = source.slice(pNameNode.startIndex, pNameNode.endIndex);
+                    if (paramName !== "self" && paramName !== "cls") {
+                      constructorParams.push(paramName);
+                    }
+                  }
+                } else if (paramChild.type === "typed_parameter" || paramChild.type === "typed_default_parameter") {
+                  const pNameNode = paramChild.childForFieldName("name");
+                  if (pNameNode) {
+                    const paramName = source.slice(pNameNode.startIndex, pNameNode.endIndex);
+                    if (paramName !== "self" && paramName !== "cls") {
+                      constructorParams.push(paramName);
+                    }
+                  }
+                }
+              });
+            }
+          }
         }
       }
     });
   }
 
-  // Extract class variables
-  const classVariables = [];
-  if (bodyNode) {
-    for (let i = 0; i < bodyNode.namedChildCount; i++) {
-      const child = bodyNode.namedChild(i);
-      if (child.type === "expression_statement") {
-        const assignment = child.namedChild(0);
-        if (assignment && assignment.type === "assignment") {
-          const left = assignment.childForFieldName("left");
-          if (left && left.type === "identifier") {
-            classVariables.push(source.slice(left.startIndex, left.endIndex));
-          }
-        }
-      }
-    }
-  }
-
+  // Match TypeScript format
   return {
     name,
     type: "class",
     visibility: "public",
-    superclasses,
+    isAbstract: false, // Python ABC checking would be complex, defaulting to false
+    extends: superclasses.length > 0 ? superclasses[0] : null, // Python supports multiple inheritance, take first
+    implements: [], // Python doesn't have interfaces like TypeScript
+    constructorParams,
+    methods, // Now array of strings instead of objects
     startLine,
-    endLine,
-    methods,
-    classVariables
+    endLine
   };
 }
 
