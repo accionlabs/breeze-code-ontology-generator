@@ -12,16 +12,12 @@ const Go = require("tree-sitter-go");
 const { extractFunctionsAndCalls } = require("./extract-functions-golang");
 const { extractClasses } = require("./extract-classes-golang");
 
-if (process.argv.length < 4) {
-  console.error(
-    "Usage: node golang/file-tree-mapper-golang.js <repoPath> <importsOutput.json>"
-  );
-  process.exit(1);
+// Wrapper function to analyze Golang repository
+function analyzeGolangRepo(repoPath) {
+  const mapper = buildPackageMapper(repoPath);
+  const analysis = analyzeImports(repoPath, mapper);
+  return analysis;
 }
-
-const repoPath = path.resolve(process.argv[2]);
-const mapperOutput = "mapper.json";   // TEMP FILE
-const importsOutput = path.resolve(process.argv[3]);
 
 // -------------------------------------------------------------
 // Initialize parser
@@ -253,31 +249,25 @@ function analyzeImports(repoPath, mapper) {
 // -------------------------------------------------------------
 // EXPORTS (for use in other files if needed)
 // -------------------------------------------------------------
-module.exports = {
-  extractImports,
-  traverse,
-  getNodeText,
-  buildPackageMapper,
-  analyzeImports
-};
+module.exports = { analyzeGolangRepo };
 
 // -------------------------------------------------------------
 // MAIN EXECUTION
 // -------------------------------------------------------------
 if (require.main === module) {
-  (async () => {
-    console.log(`📂 Scanning Go repo: ${repoPath}`);
+  if (process.argv.length < 4) {
+    console.error(
+      "Usage: node golang/file-tree-mapper-golang.js <repoPath> <importsOutput.json>"
+    );
+    process.exit(1);
+  }
 
-    const mapper = buildPackageMapper(repoPath);
-    fs.writeFileSync(mapperOutput, JSON.stringify(mapper, null, 2));
-    console.log(`🛠️  Temporary mapper saved → ${mapperOutput}`);
+  const repoPath = path.resolve(process.argv[2]);
+  const importsOutput = path.resolve(process.argv[3]);
 
-    const analysis = analyzeImports(repoPath, mapper);
-    fs.writeFileSync(importsOutput, JSON.stringify(analysis, null, 2));
-    console.log(`✅ Final output written to → ${importsOutput}`);
+  console.log(`📂 Scanning Go repo: ${repoPath}`);
 
-    // DELETE TEMP FILE
-    fs.unlinkSync(mapperOutput);
-    console.log(`🗑️  Deleted temporary file: ${mapperOutput}`);
-  })();
+  const analysis = analyzeGolangRepo(repoPath);
+  fs.writeFileSync(importsOutput, JSON.stringify(analysis, null, 2));
+  console.log(`✅ Final output written to → ${importsOutput}`);
 }

@@ -12,16 +12,12 @@ const apex = require("tree-sitter-sfapex");
 const { extractFunctionsAndCalls, extractReferences } = require("./extract-functions-salesforce");
 const { extractClasses } = require("./extract-classes-salesforce");
 
-if (process.argv.length < 4) {
-  console.error(
-    "Usage: node salesforce/file-tree-mapper-salesforce.js <repoPath> <importsOutput.json>"
-  );
-  process.exit(1);
+// Wrapper function to analyze Salesforce Apex repository
+function analyzeSalesforceRepo(repoPath) {
+  const classIndex = buildClassIndex(repoPath);
+  const analysis = analyzeApexFiles(repoPath, classIndex);
+  return analysis;
 }
-
-const repoPath = path.resolve(process.argv[2]);
-const classIndexOutput = "class-index.json";   // TEMP FILE for class lookup
-const importsOutput = path.resolve(process.argv[3]);
 
 // -------------------------------------------------------------
 // Initialize parser
@@ -292,33 +288,25 @@ function analyzeApexFiles(repoPath, classIndex) {
 // -------------------------------------------------------------
 // EXPORTS (for use in other files if needed)
 // -------------------------------------------------------------
-module.exports = {
-  extractTypeReferences,
-  traverse,
-  getNodeText,
-  buildClassIndex,
-  analyzeApexFiles
-};
+module.exports = { analyzeSalesforceRepo };
 
 // -------------------------------------------------------------
 // MAIN EXECUTION
 // -------------------------------------------------------------
 if (require.main === module) {
-  (async () => {
-    console.log(`📂 Scanning Salesforce Apex repo: ${repoPath}`);
+  if (process.argv.length < 4) {
+    console.error(
+      "Usage: node salesforce/file-tree-mapper-salesforce.js <repoPath> <importsOutput.json>"
+    );
+    process.exit(1);
+  }
 
-    // Build class index first
-    const classIndex = buildClassIndex(repoPath);
-    fs.writeFileSync(classIndexOutput, JSON.stringify(classIndex, null, 2));
-    console.log(`🛠️  Temporary class index saved → ${classIndexOutput}`);
+  const repoPath = path.resolve(process.argv[2]);
+  const importsOutput = path.resolve(process.argv[3]);
 
-    // Analyze all Apex files
-    const analysis = analyzeApexFiles(repoPath, classIndex);
-    fs.writeFileSync(importsOutput, JSON.stringify(analysis, null, 2));
-    console.log(`✅ Final output written to → ${importsOutput}`);
+  console.log(`📂 Scanning Salesforce Apex repo: ${repoPath}`);
 
-    // DELETE TEMP FILE
-    fs.unlinkSync(classIndexOutput);
-    console.log(`🗑️  Deleted temporary file: ${classIndexOutput}`);
-  })();
+  const analysis = analyzeSalesforceRepo(repoPath);
+  fs.writeFileSync(importsOutput, JSON.stringify(analysis, null, 2));
+  console.log(`✅ Final output written to → ${importsOutput}`);
 }

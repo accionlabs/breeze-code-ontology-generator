@@ -15,6 +15,9 @@ const { analyzeTypeScriptRepo } = require("./typescript/file-tree-mapper-typescr
 const { analyzeJavaScriptRepo } = require("./nodejs/file-tree-mapper-nodejs");
 const { analyzePythonRepo } = require("./python/file-tree-mapper-python");
 const { analyzeJavaRepo } = require("./java/file-tree-main-java");
+const { analyzeCSharpRepo } = require("./csharp/file-tree-mapper-csharp");
+const { analyzeGolangRepo } = require("./golang/file-tree-mapper-golang");
+const { analyzeSalesforceRepo } = require("./salesforce/file-tree-mapper-salesforce");
 const { analyzeConfigRepo } = require("./config/file-tree-mapper-config");
 
 const isWindows = process.platform === "win32";
@@ -41,6 +44,21 @@ const LANGUAGE_CONFIG = {
     extensions: ["**/*.java"],
     name: "Java",
     analyzer: analyzeJavaRepo
+  },
+  csharp: {
+    extensions: ["**/*.cs"],
+    name: "C#",
+    analyzer: analyzeCSharpRepo
+  },
+  golang: {
+    extensions: ["**/*.go"],
+    name: "Go",
+    analyzer: analyzeGolangRepo
+  },
+  salesforce: {
+    extensions: ["**/*.cls", "**/*.trigger"],
+    name: "Salesforce Apex",
+    analyzer: analyzeSalesforceRepo
   }
 };
 
@@ -55,7 +73,14 @@ const IGNORE_PATTERNS = [
   "**/__pycache__/**",
   "**/.eggs/**",
   "**/*.egg-info/**",
-  "**/.git/**"
+  "**/.git/**",
+  "**/bin/**",           // C# build output
+  "**/obj/**",           // C# intermediate files
+  "**/.vs/**",           // Visual Studio cache
+  "**/packages/**",      // NuGet packages
+  "**/vendor/**",        // Go vendor directory
+  "**/.sfdx/**",         // Salesforce DX cache
+  "**/.localdevserver/**" // Salesforce local dev
 ];
 
 // ----------------------------
@@ -437,7 +462,7 @@ async function autoDetectAndProcess(repoPath, outputDir, args) {
 
     if (detectedLanguages.length === 0) {
       console.log("\n⚠️  No supported languages detected in the repository.");
-      console.log("Supported file types: .js, .jsx, .ts, .tsx, .py, .java");
+      console.log("Supported file types: .js, .jsx, .ts, .tsx, .py, .java, .cs, .go, .cls, .trigger");
       return { success: true, languagesDetected: 0 };
     }
 
