@@ -42,7 +42,7 @@ function getNodeText(node, sourceText) {
 // -------------------------------------------------------------
 // Step 1: Extract package names
 // -------------------------------------------------------------
-function extractPackageNames(filePath) {
+function extractPackageNames(filePath, repoPath) {
   const relPath = path.relative(repoPath, filePath);
   // For Go, package name is typically the directory name
   const packageName = path.basename(path.dirname(filePath));
@@ -101,7 +101,7 @@ function buildPackageMapper(repoPath) {
   const mapper = {};
   for (const file of goFiles) {
     try {
-      const [pkgName, relPath] = extractPackageNames(file);
+      const [pkgName, relPath] = extractPackageNames(file, repoPath);
       mapper[pkgName] = relPath;
     } catch (err) {
       console.log("Error analyzing file for mapper:", file);
