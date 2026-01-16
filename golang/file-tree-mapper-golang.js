@@ -96,7 +96,7 @@ function extractImports(filePath) {
 // Step 3: Build mapper
 // -------------------------------------------------------------
 function buildPackageMapper(repoPath) {
-  const goFiles = getGoFiles();
+  const goFiles = getGoFiles(repoPath);
 
   const mapper = {};
   for (const file of goFiles) {
@@ -111,7 +111,7 @@ function buildPackageMapper(repoPath) {
   return mapper;
 }
 
-function getGoFiles() {
+function getGoFiles(repoPath) {
   return glob.sync(`${repoPath}/**/*.go`, {
     ignore: [
       `${repoPath}/**/vendor/**`,
@@ -127,7 +127,7 @@ function getGoFiles() {
 // -------------------------------------------------------------
 function analyzeImports(repoPath, mapper) {
   console.log("Started working...");
-  const goFiles = getGoFiles();
+  const goFiles = getGoFiles(repoPath);
 
   const results = [];
   const totalFiles = goFiles.length;

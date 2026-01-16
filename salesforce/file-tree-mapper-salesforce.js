@@ -23,7 +23,6 @@ function analyzeSalesforceRepo(repoPath) {
 // Initialize parser
 // -------------------------------------------------------------
 const parser = new Parser();
-console.log(apex,"apex")
 parser.setLanguage(apex.apex);
 
 // -------------------------------------------------------------

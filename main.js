@@ -162,7 +162,7 @@ async function processLanguage(language, repoPath, verbose = false) {
 
     return { language: language.key, name: language.name, data };
   } catch (err) {
-    console.error(`\n❌ ${language.name} analysis failed:`, err.message);
+    console.error(`\n❌ ${language.name} analysis failed:`, err);
     return null;
   }
 }
