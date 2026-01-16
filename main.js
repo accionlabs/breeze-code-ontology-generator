@@ -22,6 +22,16 @@ const { analyzeConfigRepo } = require("./config/file-tree-mapper-config");
 
 const isWindows = process.platform === "win32";
 
+// Helper function to count lines of code
+function countLinesOfCode(filePath) {
+  try {
+    const content = fs.readFileSync(filePath, "utf-8");
+    return content.split("\n").length;
+  } catch (err) {
+    return 0;
+  }
+}
+
 // Language configuration
 const LANGUAGE_CONFIG = {
   typescript: {
@@ -164,10 +174,10 @@ function mergeLanguageOutputs(languageResults, repoPath, outputDir) {
   console.log("\n🔄 Merging all language outputs...");
 
   const mergedFiles = [];
-  const configFiles = [];
   const analyzedLanguages = [];
   let totalFunctions = 0;
   let totalClasses = 0;
+  let totalLinesOfCode = 0;
 
   // Config file statistics and consolidated info
   const configStats = {
@@ -207,14 +217,31 @@ function mergeLanguageOutputs(languageResults, repoPath, outputDir) {
       if (Array.isArray(result.data)) {
         // Add language identifier to each file and count functions/classes
         result.data.forEach(file => {
-          const fileData = {
-            ...file,
-            language: result.language
-          };
+          const filePath = path.join(repoPath, file.path);
+          const loc = countLinesOfCode(filePath);
+          totalLinesOfCode += loc;
 
-          // Separate config files from code files
+          // Process config files differently
           if (result.language === "config") {
-            configFiles.push(fileData);
+            // Extract metadata fields (everything except path, fileName, fileType, size, lines)
+            const baseFields = ["path", "fileName", "fileType", "size", "lines", "language"];
+            const metadata = {};
+
+            Object.keys(file).forEach(key => {
+              if (!baseFields.includes(key)) {
+                metadata[key] = file[key];
+              }
+            });
+
+            const configFileData = {
+              path: file.path,
+              type: "config",
+              language: "config",
+              loc,
+              metadata
+            };
+
+            mergedFiles.push(configFileData);
             configStats.totalConfigFiles++;
 
             // Count by type
@@ -299,7 +326,15 @@ function mergeLanguageOutputs(languageResults, repoPath, outputDir) {
             }
 
           } else {
-            mergedFiles.push(fileData);
+            // Code files - add type and loc
+            const codeFileData = {
+              ...file,
+              type: "code",
+              language: result.language,
+              loc
+            };
+
+            mergedFiles.push(codeFileData);
 
             // Count functions in this file
             if (file.functions && Array.isArray(file.functions)) {
@@ -333,12 +368,12 @@ function mergeLanguageOutputs(languageResults, repoPath, outputDir) {
       totalFiles: mergedFiles.length,
       totalFunctions,
       totalClasses,
+      totalLinesOfCode,
       configs: configStats,
       generatedAt: new Date().toISOString(),
       toolVersion: "1.0.0"
     },
-    files: mergedFiles,
-    configFiles: configFiles
+    files: mergedFiles
   };
 
   // Write merged output
@@ -348,10 +383,12 @@ function mergeLanguageOutputs(languageResults, repoPath, outputDir) {
   console.log(`✅ Merged output created!`);
   console.log(`📄 Output: ${mergedOutputPath}`);
   console.log(`   - Languages: ${analyzedLanguages.join(", ")}`);
-  console.log(`   - Total code files: ${mergedFiles.length}`);
-  console.log(`   - Total config files: ${configStats.totalConfigFiles}`);
+  console.log(`   - Total files: ${mergedFiles.length}`);
+  console.log(`   - Code files: ${mergedFiles.length - configStats.totalConfigFiles}`);
+  console.log(`   - Config files: ${configStats.totalConfigFiles}`);
   console.log(`   - Total functions: ${totalFunctions}`);
   console.log(`   - Total classes: ${totalClasses}`);
+  console.log(`   - Total lines of code: ${totalLinesOfCode}`);
 
   if (configStats.totalConfigFiles > 0) {
     console.log(`\n📋 Configuration Summary:`);
