@@ -140,6 +140,7 @@ function makeRoute(fields) {
     guards: fields.guards || [],
     requestDTO: fields.requestDTO != null ? fields.requestDTO : null,
     responseDTO: fields.responseDTO != null ? fields.responseDTO : null,
+    dataLoaders: fields.dataLoaders || [],
     scope: fields.scope || "file",
     handlerLine: fields.handlerLine != null ? fields.handlerLine : null,
     text: (fields.text || `[${fields.framework}] ${method} ${endpoint}`).slice(0, MAX_TEXT),
@@ -696,6 +697,20 @@ function objectPairValue(source, objNode, key) {
   return null;
 }
 
+// Value symbols from an object literal: { a: X, b: () => ... } -> ["X", "() => ..."]
+// Used for Angular `resolve: { key: Resolver }` (an object, not a guard array).
+function objectValueSymbols(source, objNode) {
+  const out = [];
+  if (!objNode || objNode.type !== "object") return out;
+  for (let i = 0; i < objNode.namedChildCount; i++) {
+    const pair = objNode.namedChild(i);
+    if (pair.type !== "pair") continue;
+    const v = pair.childForFieldName("value");
+    if (v) out.push(text(source, v, 80));
+  }
+  return out;
+}
+
 // Resolve a `component` value to a name: Identifier, string, or lazy
 // () => import('./User.vue') -> "User.vue".
 function componentName(source, node) {
@@ -820,6 +835,9 @@ function walkAngularRouteArray(source, arrayNode, basePath, out) {
       guards = guards.concat(angularIdentList(source, objectPairValue(source, obj, k)));
     }
 
+    // resolve: { profile: ProfileResolver } -> dataLoaders ["ProfileResolver"]
+    const dataLoaders = objectValueSymbols(source, objectPairValue(source, obj, "resolve"));
+
     let kind = "page";
     let handler = null;
     const redirect = getString(source, objectPairValue(source, obj, "redirectTo"));
@@ -841,7 +859,7 @@ function walkAngularRouteArray(source, arrayNode, basePath, out) {
     const title = getString(source, objectPairValue(source, obj, "title"));
     out.push(makeRoute({
       framework: "angular-router", method: "VIEW", path: full, kind,
-      handler, guards, authRequired: guards.length > 0,
+      handler, guards, authRequired: guards.length > 0, dataLoaders,
       decorator: title || null, text: text(source, obj, 120), ...li,
     }));
 

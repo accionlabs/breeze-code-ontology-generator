@@ -101,6 +101,33 @@ export class ProductsRoutingModule {}
   check("angular(child): child component", child && child.handler === "DetailComponent");
 });
 
+// ------------------------------------------------ resolve -> dataLoaders ------
+withTempFile("account-routing.module.ts", `
+import { NgModule } from '@angular/core';
+import { RouterModule, Routes } from '@angular/router';
+import { ProfileComponent } from './profile.component';
+import { ProfileResolver } from './profile.resolver';
+import { SettingsResolver } from './settings.resolver';
+
+const routes: Routes = [
+  { path: 'account', component: ProfileComponent, resolve: { profile: ProfileResolver, settings: SettingsResolver } },
+  { path: 'plain', component: ProfileComponent },
+];
+
+@NgModule({ imports: [RouterModule.forChild(routes)], exports: [RouterModule] })
+export class AccountRoutingModule {}
+`, (file) => {
+  const routes = extractFileRoutes(file);
+  const account = find(routes, "/account");
+  check("angular(resolve): both resolvers captured in dataLoaders",
+    account && account.dataLoaders.length === 2 &&
+    account.dataLoaders.includes("ProfileResolver") &&
+    account.dataLoaders.includes("SettingsResolver"));
+  const plain = find(routes, "/plain");
+  check("angular(resolve): route without resolve has empty dataLoaders",
+    plain && Array.isArray(plain.dataLoaders) && plain.dataLoaders.length === 0);
+});
+
 // ------------------------------------------- provideRouter inline array -------
 withTempFile("app.routes.ts", `
 import { Routes } from '@angular/router';
