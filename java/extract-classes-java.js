@@ -14,7 +14,7 @@ function extractClasses(filePath, repoPath = null, captureStatements = false) {
   const classes = [];
 
   traverse(tree.rootNode, (node) => {
-    if (node.type === "class_declaration" || node.type === "interface_declaration" || node.type === "record_declaration") {
+    if (node.type === "class_declaration" || node.type === "interface_declaration" || node.type === "record_declaration" || node.type === "enum_declaration") {
       const classInfo = extractClassInfo(node, filePath, repoPath, source, captureStatements);
       if (classInfo?.name) {
         classes.push(classInfo);
@@ -28,9 +28,24 @@ function extractClasses(filePath, repoPath = null, captureStatements = false) {
 // tree-sitter-Java class-body node names. Earlier values were tree-sitter-JavaScript
 // names (lexical_declaration / variable_declaration / public_field_definition) that
 // never match the Java grammar, so class fields silently dropped (report gap G5). Java
-// class bodies hold field_declaration (and nested enum_declaration); the two local-var
-// JS names have no class-body analog in Java.
-const CLASS_STATEMENT_TYPES = ["field_declaration", "enum_declaration"];
+// class bodies hold field_declaration; nested enums are emitted as their own enum type
+// nodes (like nested classes/records), so they aren't also listed here as statements.
+const CLASS_STATEMENT_TYPES = ["field_declaration"];
+
+// The node whose named children are a type's member declarations (methods, fields,
+// nested types). For enums these live in the trailing `enum_body_declarations` block,
+// not directly on `enum_body` (whose leading children are the `enum_constant`s). For
+// classes/interfaces/records the body itself is the member container.
+function memberContainer(body) {
+  if (!body) return null;
+  if (body.type === "enum_body") {
+    for (let i = 0; i < body.namedChildCount; i++) {
+      if (body.namedChild(i).type === "enum_body_declarations") return body.namedChild(i);
+    }
+    return null; // enum declaring only constants
+  }
+  return body;
+}
 
 // Name for a class-body statement. enum_declaration exposes a direct `name` field;
 // field_declaration does not — each declared variable lives in a `variable_declarator`,
@@ -53,22 +68,38 @@ function classStatementName(child, source) {
   return null;
 }
 
+function pushStatement(statements, child, source) {
+  statements.push({
+    type: child.type,
+    name: classStatementName(child, source),
+    text: source.slice(child.startIndex, child.endIndex),
+    startLine: child.startPosition.row + 1,
+    endLine: child.endPosition.row + 1,
+  });
+}
+
 function extractClassStatements(node, source) {
   const body = node.childForFieldName("body");
   if (!body) return [];
 
   const statements = [];
-  for (let i = 0; i < body.namedChildCount; i++) {
-    const child = body.namedChild(i);
-    if (!CLASS_STATEMENT_TYPES.includes(child.type)) continue;
-    statements.push({
-      type: child.type,
-      name: classStatementName(child, source),
-      text: source.slice(child.startIndex, child.endIndex),
-      startLine: child.startPosition.row + 1,
-      endLine: child.endPosition.row + 1,
-    });
+
+  // Enum constants sit directly on enum_body, ahead of the member declarations.
+  if (body.type === "enum_body") {
+    for (let i = 0; i < body.namedChildCount; i++) {
+      const child = body.namedChild(i);
+      if (child.type === "enum_constant") pushStatement(statements, child, source);
+    }
   }
+
+  const container = memberContainer(body);
+  if (container) {
+    for (let i = 0; i < container.namedChildCount; i++) {
+      const child = container.namedChild(i);
+      if (CLASS_STATEMENT_TYPES.includes(child.type)) pushStatement(statements, child, source);
+    }
+  }
+
   collectQueryStatements(node, source, statements);
   return statements;
 }
@@ -89,6 +120,7 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
   const interfaces = getImplementedInterfaces(node, source);
   const isInterface = node.type === "interface_declaration";
   const isRecord = node.type === "record_declaration";
+  const isEnum = node.type === "enum_declaration";
 
   const members = extractClassMembers(node, source);
   const methods = members.methods;
@@ -109,7 +141,7 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
 
   return {
     name,
-    type: isInterface ? "interface" : isRecord ? "record" : "class",
+    type: isInterface ? "interface" : isRecord ? "record" : isEnum ? "enum" : "class",
     visibility,
     isAbstract,
     extends: superClass,
@@ -205,16 +237,16 @@ function getClassModifiers(node, source) {
 }
 
 function extractClassMembers(classNode, source) {
-  const body = classNode.childForFieldName("body");
-  if (!body) {
+  const container = memberContainer(classNode.childForFieldName("body"));
+  if (!container) {
     return { constructorParams: [], methods: [] };
   }
 
   const methods = [];
   let constructorParams = [];
 
-  for (let i = 0; i < body.childCount; i++) {
-    const member = body.child(i);
+  for (let i = 0; i < container.childCount; i++) {
+    const member = container.child(i);
     if (!member.isNamed) continue;
 
     // Constructor
