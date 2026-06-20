@@ -14,7 +14,7 @@ function extractClasses(filePath, repoPath = null, captureStatements = false) {
   const classes = [];
 
   traverse(tree.rootNode, (node) => {
-    if (node.type === "class_declaration" || node.type === "interface_declaration" || node.type === "record_declaration" || node.type === "enum_declaration") {
+    if (node.type === "class_declaration" || node.type === "interface_declaration" || node.type === "record_declaration" || node.type === "enum_declaration" || node.type === "annotation_type_declaration") {
       const classInfo = extractClassInfo(node, filePath, repoPath, source, captureStatements);
       if (classInfo?.name) {
         classes.push(classInfo);
@@ -121,6 +121,7 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
   const isInterface = node.type === "interface_declaration";
   const isRecord = node.type === "record_declaration";
   const isEnum = node.type === "enum_declaration";
+  const isAnnotation = node.type === "annotation_type_declaration";
 
   const members = extractClassMembers(node, source);
   const methods = members.methods;
@@ -141,7 +142,7 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
 
   return {
     name,
-    type: isInterface ? "interface" : isRecord ? "record" : isEnum ? "enum" : "class",
+    type: isInterface ? "interface" : isRecord ? "record" : isEnum ? "enum" : isAnnotation ? "annotation" : "class",
     visibility,
     isAbstract,
     extends: superClass,
@@ -258,8 +259,10 @@ function extractClassMembers(classNode, source) {
       continue;
     }
 
-    // Methods - just extract names
-    if (member.type === "method_declaration") {
+    // Methods - just extract names. annotation_type_element_declaration is the
+    // @interface element form (`String value() default ""`); it's method-like, so
+    // its name belongs in methods[] (otherwise annotation elements vanish — gap G2).
+    if (member.type === "method_declaration" || member.type === "annotation_type_element_declaration") {
       const nameNode = member.childForFieldName("name");
       if (nameNode) {
         methods.push(source.slice(nameNode.startIndex, nameNode.endIndex));
