@@ -7,7 +7,11 @@ const { truncateSourceCode, parseSource, readSource, containsDbQuery, getDbFromM
 const sharedParser = new Parser();
 sharedParser.setLanguage(Java);
 
-const STATEMENT_TYPES = ["lexical_declaration", "variable_declaration", "public_field_definition", "enum_declaration", "return_statement"];
+// tree-sitter-Java grammar node names. Earlier values were tree-sitter-JavaScript
+// names (lexical_declaration / variable_declaration / public_field_definition) that
+// never match the Java grammar, so declaration capture silently no-opped. Java uses
+// local_variable_declaration (method bodies) and field_declaration (class bodies).
+const STATEMENT_TYPES = ["local_variable_declaration", "field_declaration", "enum_declaration", "return_statement"];
 
 function extractFunctionsWithCalls(filePath, repoPath = null, classIndex = {}, captureSourceCode = false, captureStatements = false) {
   const { source, tree } = parseSource(filePath, sharedParser);

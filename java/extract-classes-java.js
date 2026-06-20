@@ -25,7 +25,33 @@ function extractClasses(filePath, repoPath = null, captureStatements = false) {
   return classes;
 }
 
-const CLASS_STATEMENT_TYPES = ["lexical_declaration", "variable_declaration", "public_field_definition", "enum_declaration"];
+// tree-sitter-Java class-body node names. Earlier values were tree-sitter-JavaScript
+// names (lexical_declaration / variable_declaration / public_field_definition) that
+// never match the Java grammar, so class fields silently dropped (report gap G5). Java
+// class bodies hold field_declaration (and nested enum_declaration); the two local-var
+// JS names have no class-body analog in Java.
+const CLASS_STATEMENT_TYPES = ["field_declaration", "enum_declaration"];
+
+// Name for a class-body statement. enum_declaration exposes a direct `name` field;
+// field_declaration does not — each declared variable lives in a `variable_declarator`,
+// and one declaration may declare several (e.g. `int a, b;`), so join their names.
+function classStatementName(child, source) {
+  const nameNode = child.childForFieldName("name");
+  if (nameNode) return source.slice(nameNode.startIndex, nameNode.endIndex);
+
+  if (child.type === "field_declaration") {
+    const names = [];
+    for (let i = 0; i < child.namedChildCount; i++) {
+      const d = child.namedChild(i);
+      if (d.type !== "variable_declarator") continue;
+      const n = d.childForFieldName("name");
+      if (n) names.push(source.slice(n.startIndex, n.endIndex));
+    }
+    return names.length ? names.join(", ") : null;
+  }
+
+  return null;
+}
 
 function extractClassStatements(node, source) {
   const body = node.childForFieldName("body");
@@ -35,10 +61,9 @@ function extractClassStatements(node, source) {
   for (let i = 0; i < body.namedChildCount; i++) {
     const child = body.namedChild(i);
     if (!CLASS_STATEMENT_TYPES.includes(child.type)) continue;
-    const nameNode = child.childForFieldName("name");
     statements.push({
       type: child.type,
-      name: nameNode ? source.slice(nameNode.startIndex, nameNode.endIndex) : null,
+      name: classStatementName(child, source),
       text: source.slice(child.startIndex, child.endIndex),
       startLine: child.startPosition.row + 1,
       endLine: child.endPosition.row + 1,
