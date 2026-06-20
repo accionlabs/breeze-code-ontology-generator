@@ -13,6 +13,7 @@ const path = require("path");
 
 const { extractFunctionsAndCalls, extractFileStatements } = require("../typescript/extract-functions-typescript");
 const { extractClasses } = require("../nodejs/extract-classes-nodejs");
+const { extractClasses: extractTsClasses } = require("../typescript/extract-classes-typescript");
 const {
   extractFileStatements: jsFileStatements,
 } = require("../nodejs/extract-functions-nodejs");
@@ -105,6 +106,36 @@ class Widget {
   check("JS class fields captured as field_definition", fields.length === 2);
   check("field_definition has name (count)", fields.some((s) => s.name === "count"));
   check("field_definition has name (label)", fields.some((s) => s.name === "label"));
+});
+
+// ---------------------------------- TS class-level decorators as statements --
+// Angular structural metadata (@Component selector/templateUrl, @NgModule,
+// @Injectable) lives outside the class body and used to be dropped (BREEZEAI-255).
+withTempDir({
+  "foo.component.ts": `
+import { Component, Injectable } from '@angular/core';
+
+@Component({ selector: 'app-foo', templateUrl: './foo.html' })
+export class FooComponent {
+  @Input() title: string;
+  ngOnInit() {}
+}
+
+@Injectable()
+class FooService {}
+`,
+}, (dir) => {
+  const classes = extractTsClasses(path.join(dir, "foo.component.ts"), dir, true);
+  const cmp = classes.find((c) => c.name === "FooComponent");
+  const decs = (cmp.statements || []).filter((s) => s.type === "decorator");
+  const component = decs.find((s) => s.name === "Component");
+  check("exported class-level @Component captured as decorator statement", !!component);
+  check("@Component metadata preserved in text", /selector: 'app-foo'/.test(component.text) &&
+    /templateUrl: '.\/foo.html'/.test(component.text));
+  const svc = classes.find((c) => c.name === "FooService");
+  const svcDecs = (svc.statements || []).filter((s) => s.type === "decorator");
+  check("bare class-level @Injectable captured as decorator statement",
+    svcDecs.some((s) => s.name === "Injectable"));
 });
 
 // ------------------------------------------- api_call at file scope (TS) ----
