@@ -14,7 +14,7 @@ function extractClasses(filePath, repoPath = null, captureStatements = false) {
   const classes = [];
 
   traverse(tree.rootNode, (node) => {
-    if (node.type === "class_declaration" || node.type === "interface_declaration") {
+    if (node.type === "class_declaration" || node.type === "interface_declaration" || node.type === "record_declaration") {
       const classInfo = extractClassInfo(node, filePath, repoPath, source, captureStatements);
       if (classInfo?.name) {
         classes.push(classInfo);
@@ -88,11 +88,19 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
   const superClass = getSuperClassName(node, source);
   const interfaces = getImplementedInterfaces(node, source);
   const isInterface = node.type === "interface_declaration";
+  const isRecord = node.type === "record_declaration";
 
-  const {
-    constructorParams,
-    methods
-  } = extractClassMembers(node, source);
+  const members = extractClassMembers(node, source);
+  const methods = members.methods;
+  let constructorParams = members.constructorParams;
+
+  // A record's components ARE its canonical constructor parameters; they live on the
+  // record header's `parameters` node, not in the body (unless a canonical constructor
+  // is written out explicitly, in which case extractClassMembers already found it).
+  if (isRecord && constructorParams.length === 0) {
+    const paramsNode = node.childForFieldName("parameters");
+    if (paramsNode) constructorParams = extractParameterNames(paramsNode, source);
+  }
 
   const { visibility, isAbstract } = getClassModifiers(node, source);
   const decorators = extractDecorators(node, source);
@@ -101,7 +109,7 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
 
   return {
     name,
-    type: isInterface ? "interface" : "class",
+    type: isInterface ? "interface" : isRecord ? "record" : "class",
     visibility,
     isAbstract,
     extends: superClass,
