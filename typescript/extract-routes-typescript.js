@@ -6,16 +6,31 @@
  */
 const Parser = require("tree-sitter");
 const TypeScript = require("tree-sitter-typescript").typescript;
+const TSX = require("tree-sitter-typescript").tsx;
 const path = require("path");
-const { parseSource } = require("../utils");
+const { readSource, parseSource } = require("../utils");
 const { extractRoutesFromTree } = require("../routes-js-core");
 
 const sharedParser = new Parser();
 sharedParser.setLanguage(TypeScript);
 
+// JSX-aware grammar, used only for React-router files: their route configs
+// embed JSX (element={<X/>}) which the plain TypeScript grammar mis-parses,
+// corrupting the surrounding route objects (children arrays, etc.).
+const tsxParser = new Parser();
+tsxParser.setLanguage(TSX);
+
 function extractFileRoutes(filePath) {
   try {
-    const { source, tree } = parseSource(filePath, sharedParser);
+    const source = readSource(filePath);
+    // React-router files need the JSX-aware grammar. Re-parse them directly
+    // (the shared parseSource cache already holds a plain-grammar tree from
+    // the function/class extractors that ran first on this file). All other
+    // files keep the fast cached path — no perf regression.
+    if (/react-router/.test(source)) {
+      return extractRoutesFromTree(source, tsxParser.parse(source));
+    }
+    const { tree } = parseSource(filePath, sharedParser);
     return extractRoutesFromTree(source, tree);
   } catch (e) {
     return [];

@@ -119,6 +119,7 @@ function detectImports(root, source) {
     loopback: has(/^@loopback\/rest$/),
     vueRouter: has(/^vue-router$/),
     angularRouter: has(/^@angular\/router$/),
+    reactRouter: has(/^react-router(-dom|-native)?$/),
   };
 }
 
@@ -909,6 +910,240 @@ function extractAngularRoutes(root, source, fw) {
 }
 
 // -------------------------------------------------------------------
+// React Router (frontend): config-object form. Tagged method "VIEW",
+// framework "react-router".
+//   createBrowserRouter / createHashRouter / createMemoryRouter([...])
+//   useRoutes([...])               (also typed `RouteObject[]` arrays)
+//   { path, element|Component, lazy, loader, action, index, children }
+// element={<X/>}|Component:X|lazy -> handler; loader/action -> dataLoaders;
+// index:true resolves to the parent path; pathless layout routes emit no
+// URL of their own but still compose their children. Child paths are
+// relative and are composed onto the parent path (kind "lazy" | "page").
+// -------------------------------------------------------------------
+const REACT_ROUTER_FACTORIES = new Set([
+  "createBrowserRouter", "createHashRouter", "createMemoryRouter", "useRoutes",
+]);
+
+function joinReactPath(base, child) {
+  if (child == null || child === "") return base || "/";
+  if (child.startsWith("/")) return child;          // absolute child path
+  const b = base && base !== "/" ? (base.endsWith("/") ? base.slice(0, -1) : base) : "";
+  return b + "/" + child;
+}
+
+// Resolve a route object's component reference to a name:
+//   element: <Home /> | <Layout>..</Layout>  -> "Home" / "Layout" (JSX tag)
+//   Component: Orders                         -> "Orders"
+//   lazy: () => import('./Detail')            -> "Detail" (import basename)
+function reactHandler(source, obj) {
+  const element = objectPairValue(source, obj, "element");
+  if (element) {
+    let tag = null;
+    traverse(element, (x) => {
+      if (tag) return;
+      if (x.type === "jsx_self_closing_element" || x.type === "jsx_opening_element") {
+        tag = text(source, x.childForFieldName("name"), 80);
+      }
+    });
+    if (tag) return tag;
+  }
+  const comp = objectPairValue(source, obj, "Component");
+  if (comp && comp.type === "identifier") return text(source, comp, 80);
+  const lazy = objectPairValue(source, obj, "lazy");
+  if (lazy) return componentName(source, lazy);
+  return null;
+}
+
+function walkReactRouteArray(source, arrayNode, basePath, out) {
+  for (let i = 0; i < arrayNode.namedChildCount; i++) {
+    const obj = arrayNode.namedChild(i);
+    if (obj.type !== "object") continue;
+    const indexVal = objectPairValue(source, obj, "index");
+    const isIndex = indexVal && indexVal.type === "true";
+    const p = getString(source, objectPairValue(source, obj, "path"));
+
+    // path -> composed URL; index route -> parent URL; pathless layout -> none
+    let full = null;
+    if (p != null) full = joinReactPath(basePath, p);
+    else if (isIndex) full = basePath || "/";
+
+    if (full != null) {
+      const lazy = objectPairValue(source, obj, "lazy");
+      const dataLoaders = [];
+      const loader = objectPairValue(source, obj, "loader");
+      if (loader) dataLoaders.push(text(source, loader, 80));
+      const action = objectPairValue(source, obj, "action");
+      if (action) dataLoaders.push(text(source, action, 80));
+      const li = { startLine: obj.startPosition.row + 1, endLine: obj.endPosition.row + 1 };
+      out.push(makeRoute({
+        framework: "react-router", method: "VIEW", path: full,
+        kind: lazy ? "lazy" : "page", handler: reactHandler(source, obj),
+        dataLoaders, text: text(source, obj, 120), ...li,
+      }));
+    }
+
+    const children = objectPairValue(source, obj, "children");
+    if (children && children.type === "array") {
+      walkReactRouteArray(source, children, full != null ? full : basePath, out);
+    }
+  }
+}
+
+// const routes: RouteObject[] = [...]
+function isReactRoutesTypedDecl(source, declaratorNode) {
+  for (let i = 0; i < declaratorNode.namedChildCount; i++) {
+    const c = declaratorNode.namedChild(i);
+    if (c.type === "type_annotation" && /\bRouteObject\b/.test(text(source, c, 60))) return true;
+  }
+  return false;
+}
+
+function extractReactRoutes(root, source, fw) {
+  const out = [];
+  if (!fw.reactRouter) return out;
+  const arrays = new Set();
+  traverse(root, (n) => {
+    // createBrowserRouter([...]) / useRoutes([...])
+    if (n.type === "call_expression") {
+      const fn = n.childForFieldName("function");
+      if (!fn) return;
+      const name = fn.type === "identifier" ? text(source, fn)
+        : fn.type === "member_expression" ? memberProperty(source, fn) : null;
+      if (name && REACT_ROUTER_FACTORIES.has(name)) {
+        const arg = firstArg(n);
+        if (arg && arg.type === "array") arrays.add(arg);
+      }
+      return;
+    }
+    // const routes: RouteObject[] = [...]
+    if (n.type === "variable_declarator") {
+      const val = n.childForFieldName("value");
+      if (val && val.type === "array" && isReactRoutesTypedDecl(source, n)) arrays.add(val);
+    }
+  });
+  for (const arr of arrays) walkReactRouteArray(source, arr, "", out);
+  return out;
+}
+
+// -------------------------------------------------------------------
+// React Router (frontend): JSX element form.
+//   <Routes> / <Switch> wrapping <Route path="x" element={<X/>}>..</Route>
+//   also createRoutesFromElements(<Route .../>).
+//   path="x" -> path; index (bool attr) -> parent path; element={<X/>}|
+//   component={X} -> handler; loader/action={fn} -> dataLoaders. Nested
+//   <Route> children compose onto the parent path; pathless <Route> (layout)
+//   emits no URL of its own but still composes its children.
+// -------------------------------------------------------------------
+function jsxOpeningOf(node) {
+  if (node.type === "jsx_self_closing_element") return node;
+  if (node.type === "jsx_element") {
+    for (let i = 0; i < node.namedChildCount; i++) {
+      if (node.namedChild(i).type === "jsx_opening_element") return node.namedChild(i);
+    }
+  }
+  return null;
+}
+
+function jsxElementName(source, node) {
+  const open = jsxOpeningOf(node);
+  return open ? text(source, open.childForFieldName("name"), 80) : null;
+}
+
+function isJsxElement(node) {
+  return node.type === "jsx_element" || node.type === "jsx_self_closing_element";
+}
+
+// jsx_attribute by name; namedChild(0) is the name, namedChild(1) the value.
+function jsxAttr(source, openNode, name) {
+  for (let i = 0; i < openNode.namedChildCount; i++) {
+    const a = openNode.namedChild(i);
+    if (a.type === "jsx_attribute" && text(source, a.namedChild(0)) === name) return a;
+  }
+  return null;
+}
+
+// path="x" -> "x" (string-valued attribute)
+function jsxAttrString(source, openNode, name) {
+  const a = jsxAttr(source, openNode, name);
+  return a ? getString(source, a.namedChild(1)) : null;
+}
+
+// element={expr} -> the inner expression node; identifier="x" -> the value node
+function jsxAttrExprNode(source, openNode, name) {
+  const a = jsxAttr(source, openNode, name);
+  if (!a) return null;
+  const v = a.namedChild(1);
+  if (v && v.type === "jsx_expression") return v.namedChild(0) || null;
+  return v || null;
+}
+
+function reactJsxHandler(source, openNode) {
+  const el = jsxAttrExprNode(source, openNode, "element"); // element={<X/>}
+  if (el) {
+    if (isJsxElement(el)) {
+      const n = jsxElementName(source, el);
+      if (n) return n;
+    } else if (el.type === "identifier") {
+      return text(source, el, 80);
+    }
+  }
+  const comp = jsxAttrExprNode(source, openNode, "component"); // v5 component={X}
+  if (comp && comp.type === "identifier") return text(source, comp, 80);
+  return null;
+}
+
+function walkReactJsxRoutes(source, node, basePath, out) {
+  const open = jsxOpeningOf(node);
+  if (!open) return;
+  const isIndex = jsxAttr(source, open, "index") != null;
+  const p = jsxAttrString(source, open, "path");
+
+  let full = null;
+  if (p != null) full = joinReactPath(basePath, p);
+  else if (isIndex) full = basePath || "/";
+
+  if (full != null) {
+    const dataLoaders = [];
+    for (const k of ["loader", "action"]) {
+      const ex = jsxAttrExprNode(source, open, k);
+      if (ex) dataLoaders.push(text(source, ex, 80));
+    }
+    const li = { startLine: node.startPosition.row + 1, endLine: node.endPosition.row + 1 };
+    out.push(makeRoute({
+      framework: "react-router", method: "VIEW", path: full, kind: "page",
+      handler: reactJsxHandler(source, open), dataLoaders,
+      text: text(source, node, 120), ...li,
+    }));
+  }
+
+  // Nested <Route> children compose onto this route's path (pathless -> basePath).
+  if (node.type === "jsx_element") {
+    const childBase = full != null ? full : basePath;
+    for (let i = 0; i < node.namedChildCount; i++) {
+      const c = node.namedChild(i);
+      if (isJsxElement(c) && jsxElementName(source, c) === "Route") {
+        walkReactJsxRoutes(source, c, childBase, out);
+      }
+    }
+  }
+}
+
+function extractReactJsxRoutes(root, source, fw) {
+  const out = [];
+  if (!fw.reactRouter) return out;
+  traverse(root, (n) => {
+    if (!isJsxElement(n) || jsxElementName(source, n) !== "Route") return;
+    // Only seed from a root <Route> (no <Route> ancestor); nested ones are
+    // reached by recursion, so this avoids processing them twice.
+    for (let anc = n.parent; anc; anc = anc.parent) {
+      if (isJsxElement(anc) && jsxElementName(source, anc) === "Route") return;
+    }
+    walkReactJsxRoutes(source, n, "", out);
+  });
+  return out;
+}
+
+// -------------------------------------------------------------------
 // Public entry
 // -------------------------------------------------------------------
 function extractRoutesFromTree(source, tree) {
@@ -920,6 +1155,8 @@ function extractRoutesFromTree(source, tree) {
     ...extractLoopbackRoutes(root, source, fw),
     ...extractVueRouterRoutes(root, source, fw),
     ...extractAngularRoutes(root, source, fw),
+    ...extractReactRoutes(root, source, fw),
+    ...extractReactJsxRoutes(root, source, fw),
   ];
   routes.sort((a, b) => a.startLine - b.startLine || a.endLine - b.endLine);
   return routes;
