@@ -314,28 +314,45 @@ function extractStatements(node, source) {
     }
   }
 
-  // Collect return statements from nested blocks (if/else, loops, try/catch, etc.)
-  collectReturnStatements(body, source, statements, body);
+  // Collect return statements from nested blocks (if/else, loops, try/catch, etc.).
+  // Dedup by line range (not node identity, which is non-deterministic across worker
+  // runs — gap G9) so direct-child returns already captured above aren't doubled.
+  const seen = new Set(
+    statements.filter(s => s.type === "return_statement").map(s => `${s.startLine}:${s.endLine}`)
+  );
+  collectReturnStatements(body, source, statements, seen);
 
   collectQueryStatements(node, source, statements);
 
   return statements;
 }
 
-function collectReturnStatements(node, source, statements, functionBody) {
+// Nodes that open a new function/type scope: a return inside them belongs to THAT
+// scope (a lambda, a nested/local/anonymous class's method), not the method we're
+// collecting for — so we must not recurse past them (gap G9 return leak). Anonymous
+// classes have no class_declaration node; their members hang off class_body, so the
+// *_body nodes are the boundaries that matter.
+const RETURN_SCOPE_BOUNDARIES = new Set([
+  "lambda_expression",
+  "method_declaration", "constructor_declaration",
+  "class_body", "interface_body", "enum_body", "annotation_type_body",
+]);
+
+function collectReturnStatements(node, source, statements, seen) {
   for (let i = 0; i < node.namedChildCount; i++) {
     const child = node.namedChild(i);
     if (child.type === "return_statement") {
-      // Skip if already captured as direct child of function body
-      if (child.parent === functionBody) continue;
+      const key = `${child.startPosition.row + 1}:${child.endPosition.row + 1}`;
+      if (seen.has(key)) continue;
+      seen.add(key);
       statements.push({
         type: child.type,
         text: source.slice(child.startIndex, child.endIndex).slice(0, getStatementTextLimit(child)),
         startLine: child.startPosition.row + 1,
         endLine: child.endPosition.row + 1,
       });
-    } else {
-      collectReturnStatements(child, source, statements, functionBody);
+    } else if (!RETURN_SCOPE_BOUNDARIES.has(child.type)) {
+      collectReturnStatements(child, source, statements, seen);
     }
   }
 }
