@@ -17,6 +17,7 @@ const { extractFileRoutes } = require("./extract-routes-typescript");
 const { attachRoutes } = require("../routes-js-core");
 const { loadPathAliases, resolveWithAlias } = require("./resolve-path-aliases");
 const { buildAngularMountPrefixes, joinMount } = require("./angular-route-mounts");
+const { buildReactMountPrefixes } = require("./react-route-mounts");
 const { getIgnorePatternsWithPrefix } = require("../ignore-patterns");
 
 // -------------------------------------------------------------
@@ -51,11 +52,17 @@ function analyzeTypeScriptFiles(repoPath, pathAliases, opts = {}) {
   // absolute prefix under which they are lazily mounted (parses only the few
   // @angular/router files). Empty/{} for non-Angular repos.
   let ngMountPrefixes = {};
+  let reactMountPrefixes = {};
   if (opts.captureStatements) {
     try {
       ngMountPrefixes = buildAngularMountPrefixes(repoPath, tsFiles, pathAliases).prefixMap;
     } catch (e) {
       ngMountPrefixes = {};
+    }
+    try {
+      reactMountPrefixes = buildReactMountPrefixes(repoPath, tsFiles, pathAliases).prefixMap;
+    } catch (e) {
+      reactMountPrefixes = {};
     }
   }
 
@@ -190,10 +197,17 @@ function analyzeTypeScriptFiles(repoPath, pathAliases, opts = {}) {
       // call-based routes (scope "file") attach to the File node.
       const routes = opts.captureStatements ? extractFileRoutes(file) : [];
       // Prefix Angular routes with their lazy-mount path (cross-file compose).
-      const mountPrefix = ngMountPrefixes[path.relative(repoPath, file)];
+      const relForMount = path.relative(repoPath, file);
+      const mountPrefix = ngMountPrefixes[relForMount];
       if (mountPrefix) {
         for (const r of routes) {
           if (r.framework === "angular-router") r.path = joinMount(mountPrefix, r.path);
+        }
+      }
+      const reactPrefix = reactMountPrefixes[relForMount];
+      if (reactPrefix) {
+        for (const r of routes) {
+          if (r.framework === "react-router") r.path = joinMount(reactPrefix, r.path);
         }
       }
       attachRoutes(routes, functions, statements);
