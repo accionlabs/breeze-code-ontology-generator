@@ -408,6 +408,17 @@ function extractImports(filePath, classIndex) {
       } else {
         imports.externalImports.push(...resolved.values);
       }
+    } else if (node.type === "requires_module_directive") {
+      // module-info.java (gap G8): a `requires X` is a module-level dependency edge —
+      // surface it through externalImports so it joins the dependency graph. The module
+      // name is the directive's scoped/plain identifier (skip the `transitive`/`static` mod).
+      for (let i = 0; i < node.namedChildCount; i++) {
+        const c = node.namedChild(i);
+        if (c.type === "scoped_identifier" || c.type === "identifier") {
+          imports.externalImports.push(source.slice(c.startIndex, c.endIndex));
+          break;
+        }
+      }
     }
   });
 

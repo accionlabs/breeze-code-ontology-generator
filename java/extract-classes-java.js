@@ -19,6 +19,13 @@ function extractClasses(filePath, repoPath = null, captureStatements = false) {
       if (classInfo?.name) {
         classes.push(classInfo);
       }
+    } else if (node.type === "module_declaration") {
+      // module-info.java (gap G8): emit a type:"module" node carrying the module name and
+      // its requires/exports/opens/uses/provides directives as statements[] (same shape as
+      // enum constants / fields). requires targets also flow into externalImports — see
+      // extractImports in extract-functions-java.js.
+      const mod = extractModuleInfo(node, source);
+      if (mod.name) classes.push(mod);
     }
   });
 
@@ -190,6 +197,56 @@ function extractGenerics(node, source) {
     if (child.type === "type_parameters") return source.slice(child.startIndex, child.endIndex);
   }
   return null;
+}
+
+// A module directive's primary name is its first scoped/plain identifier — the required
+// module (requires), exported/opened package (exports/opens), or service (uses/provides).
+// Modifiers (e.g. `transitive`) and secondary targets (`to`/`with`) stay in the raw text.
+function moduleDirectiveName(directive, source) {
+  for (let i = 0; i < directive.namedChildCount; i++) {
+    const c = directive.namedChild(i);
+    if (c.type === "scoped_identifier" || c.type === "identifier") {
+      return source.slice(c.startIndex, c.endIndex);
+    }
+  }
+  return null;
+}
+
+function extractModuleInfo(node, source) {
+  const nameNode = node.childForFieldName("name");
+  const name = nameNode ? source.slice(nameNode.startIndex, nameNode.endIndex) : null;
+
+  const statements = [];
+  const body = node.childForFieldName("body");
+  if (body) {
+    for (let i = 0; i < body.namedChildCount; i++) {
+      const d = body.namedChild(i);
+      if (!d.type.endsWith("_module_directive")) continue;
+      statements.push({
+        type: d.type,
+        name: moduleDirectiveName(d, source),
+        text: source.slice(d.startIndex, d.endIndex),
+        startLine: d.startPosition.row + 1,
+        endLine: d.endPosition.row + 1,
+      });
+    }
+  }
+
+  return {
+    name,
+    type: "module",
+    visibility: "public",
+    isAbstract: false,
+    generics: null,
+    extends: null,
+    implements: [],
+    decorators: [],
+    constructorParams: [],
+    methods: [],
+    statements,
+    startLine: node.startPosition.row + 1,
+    endLine: node.endPosition.row + 1,
+  };
 }
 
 function getSuperClassName(node, source) {
