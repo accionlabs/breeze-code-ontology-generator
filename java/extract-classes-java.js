@@ -137,6 +137,7 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
 
   const { visibility, isAbstract } = getClassModifiers(node, source);
   const decorators = extractDecorators(node, source);
+  const generics = extractGenerics(node, source);
 
   const statements = captureStatements ? extractClassStatements(node, source) : [];
 
@@ -145,6 +146,7 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
     type: isInterface ? "interface" : isRecord ? "record" : isEnum ? "enum" : isAnnotation ? "annotation" : "class",
     visibility,
     isAbstract,
+    generics,
     extends: superClass,
     implements: interfaces,
     decorators,
@@ -175,6 +177,19 @@ function extractDecorators(node, source) {
 function getClassName(node, source) {
   const nameNode = node.childForFieldName("name");
   return nameNode ? source.slice(nameNode.startIndex, nameNode.endIndex) : null;
+}
+
+// Raw type-parameter text for a type declaration, e.g. "<T extends Comparable<? super T>>"
+// (gap G4). Stored as a string under `generics` to match the TypeScript extractor's
+// field; the Java grammar uses the same `type_parameters` node name.
+function extractGenerics(node, source) {
+  const typeParams = node.childForFieldName("type_parameters");
+  if (typeParams) return source.slice(typeParams.startIndex, typeParams.endIndex);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child.type === "type_parameters") return source.slice(child.startIndex, child.endIndex);
+  }
+  return null;
 }
 
 function getSuperClassName(node, source) {

@@ -43,6 +43,7 @@ function extractFunctionInfo(node, filePath, repoPath = null, source, captureSou
 
   const { visibility, kind } = getFunctionModifiers(node, source);
   const decorators = readDecorators(node, source);
+  const generics = extractGenerics(node, source);
 
   const statements = captureStatements ? extractStatements(node, source) : [];
 
@@ -51,6 +52,7 @@ function extractFunctionInfo(node, filePath, repoPath = null, source, captureSou
     type: node.type === "constructor_declaration" ? "constructor" : "method",
     visibility,
     kind,
+    generics,  // raw method type-parameter text, e.g. "<R>" (gap G4); null if none
     decorators,  // [{ name, args }] — method-level annotations (with args)
     params,  // Now returns string array
     startLine,
@@ -244,6 +246,19 @@ function paramType(child, source) {
 function getFunctionName(node, source) {
   const nameNode = node.childForFieldName("name");
   return nameNode ? source.slice(nameNode.startIndex, nameNode.endIndex) : null;
+}
+
+// Raw method type-parameter text, e.g. "<R>" or "<E extends Number>" (gap G4).
+// Mirrors the class extractor / TypeScript extractor; the Java grammar exposes a
+// `type_parameters` field on method_declaration.
+function extractGenerics(node, source) {
+  const typeParams = node.childForFieldName("type_parameters");
+  if (typeParams) return source.slice(typeParams.startIndex, typeParams.endIndex);
+  for (let i = 0; i < node.childCount; i++) {
+    const child = node.child(i);
+    if (child.type === "type_parameters") return source.slice(child.startIndex, child.endIndex);
+  }
+  return null;
 }
 
 function extractDirectCalls(funcNode, source) {
