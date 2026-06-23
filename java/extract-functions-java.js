@@ -52,7 +52,7 @@ function extractFunctionInfo(node, filePath, repoPath = null, source, captureSou
     type: node.type === "constructor_declaration" ? "constructor" : "method",
     visibility,
     kind,
-    generics,  // raw method type-parameter text, e.g. "<R>" (gap G4); null if none
+    generics,  // raw method type-parameter text, e.g. "<R>"; null if none
     decorators,  // [{ name, args }] — method-level annotations (with args)
     params,  // Now returns string array
     startLine,
@@ -248,7 +248,7 @@ function getFunctionName(node, source) {
   return nameNode ? source.slice(nameNode.startIndex, nameNode.endIndex) : null;
 }
 
-// Raw method type-parameter text, e.g. "<R>" or "<E extends Number>" (gap G4).
+// Raw method type-parameter text, e.g. "<R>" or "<E extends Number>".
 // Mirrors the class extractor / TypeScript extractor; the Java grammar exposes a
 // `type_parameters` field on method_declaration.
 function extractGenerics(node, source) {
@@ -331,7 +331,7 @@ function extractStatements(node, source) {
 
   // Collect return statements from nested blocks (if/else, loops, try/catch, etc.).
   // Dedup by line range (not node identity, which is non-deterministic across worker
-  // runs — gap G9) so direct-child returns already captured above aren't doubled.
+  // runs) so direct-child returns already captured above aren't doubled.
   const seen = new Set(
     statements.filter(s => s.type === "return_statement").map(s => `${s.startLine}:${s.endLine}`)
   );
@@ -344,7 +344,7 @@ function extractStatements(node, source) {
 
 // Nodes that open a new function/type scope: a return inside them belongs to THAT
 // scope (a lambda, a nested/local/anonymous class's method), not the method we're
-// collecting for — so we must not recurse past them (gap G9 return leak). Anonymous
+// collecting for — so we must not recurse past them (the return-leak bug). Anonymous
 // classes have no class_declaration node; their members hang off class_body, so the
 // *_body nodes are the boundaries that matter.
 const RETURN_SCOPE_BOUNDARIES = new Set([
@@ -409,7 +409,7 @@ function extractImports(filePath, classIndex) {
         imports.externalImports.push(...resolved.values);
       }
     } else if (node.type === "requires_module_directive") {
-      // module-info.java (gap G8): a `requires X` is a module-level dependency edge —
+      // module-info.java: a `requires X` is a module-level dependency edge —
       // surface it through externalImports so it joins the dependency graph. The module
       // name is the directive's scoped/plain identifier (skip the `transitive`/`static` mod).
       for (let i = 0; i < node.namedChildCount; i++) {

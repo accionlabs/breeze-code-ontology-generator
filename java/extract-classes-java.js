@@ -20,7 +20,7 @@ function extractClasses(filePath, repoPath = null, captureStatements = false) {
         classes.push(classInfo);
       }
     } else if (node.type === "module_declaration") {
-      // module-info.java (gap G8): emit a type:"module" node carrying the module name and
+      // module-info.java: emit a type:"module" node carrying the module name and
       // its requires/exports/opens/uses/provides directives as statements[] (same shape as
       // enum constants / fields). requires targets also flow into externalImports — see
       // extractImports in extract-functions-java.js.
@@ -34,7 +34,7 @@ function extractClasses(filePath, repoPath = null, captureStatements = false) {
 
 // tree-sitter-Java class-body node names. Earlier values were tree-sitter-JavaScript
 // names (lexical_declaration / variable_declaration / public_field_definition) that
-// never match the Java grammar, so class fields silently dropped (report gap G5). Java
+// never match the Java grammar, so class fields silently dropped. Java
 // class bodies hold field_declaration; nested enums are emitted as their own enum type
 // nodes (like nested classes/records), so they aren't also listed here as statements.
 const CLASS_STATEMENT_TYPES = ["field_declaration"];
@@ -187,7 +187,7 @@ function getClassName(node, source) {
 }
 
 // Raw type-parameter text for a type declaration, e.g. "<T extends Comparable<? super T>>"
-// (gap G4). Stored as a string under `generics` to match the TypeScript extractor's
+// Stored as a string under `generics` to match the TypeScript extractor's
 // field; the Java grammar uses the same `type_parameters` node name.
 function extractGenerics(node, source) {
   const typeParams = node.childForFieldName("type_parameters");
@@ -333,7 +333,7 @@ function extractClassMembers(classNode, source) {
 
     // Methods - just extract names. annotation_type_element_declaration is the
     // @interface element form (`String value() default ""`); it's method-like, so
-    // its name belongs in methods[] (otherwise annotation elements vanish — gap G2).
+    // its name belongs in methods[] (otherwise annotation elements vanish).
     if (member.type === "method_declaration" || member.type === "annotation_type_element_declaration") {
       const nameNode = member.childForFieldName("name");
       if (nameNode) {

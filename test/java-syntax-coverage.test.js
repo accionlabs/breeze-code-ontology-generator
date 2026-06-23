@@ -2,11 +2,10 @@
  * Java syntax-coverage test — Java 7 / 8 / 11 / 17.
  *
  * Regression assertions for every construct the extractor models, so working
- * behaviour can't silently regress. Originally this file also tracked KNOWN GAPS
- * (G1–G9) as executable reminders; G1–G4, G8 and G9 have since been fixed and
- * promoted here. G5 (class fields as a structured array), G6 (sealed/permits) and
- * G7 (throws) are intentionally out of scope — they require new graph fields with
- * no cross-language precedent — so no assertions are kept for them.
+ * behaviour can't silently regress. Class fields as a structured array,
+ * sealed/permits metadata, and throws clauses are intentionally out of scope —
+ * they would require new graph fields with no cross-language precedent — so no
+ * assertions are kept for them.
  *
  * Run: node test/java-syntax-coverage.test.js   (requires Node 22.x)
  * Note: tree-sitter's native binding segfaults on process teardown under Node 22,
@@ -129,7 +128,6 @@ public class Anno {
 // =====================================================================
 // CAPTURED — JAVA 7 (PROJECT COIN: small language changes)
 // All capture at method/call level; they introduce NO new version-specific gap.
-// (The latent G5/G7 below are merely *exercised* by the field constants + throws.)
 // =====================================================================
 {
   const r = run("Coin.java", `
@@ -231,59 +229,57 @@ public class Imports {}
 }
 
 // =====================================================================
-// CAPTURED — FORMER GAPS (G1–G4, G8, G9), now fully modelled.
-// (G5 class fields, G6 sealed/permits, G7 throws are intentionally NOT
-//  captured — they need new graph fields with no cross-language precedent
-//  and are out of scope; no assertions are kept for them.)
+// CAPTURED — TYPE-NODE MODELLING (enum, @interface, record, generics,
+// module-info) and nested-return handling.
 // =====================================================================
 
-// G1 — enum (Java 5+): modelled as a type node; constants captured; methods owned.
+// enum (Java 5+): modelled as a type node; constants captured; methods owned.
 {
   const r = run("Color.java", `package p; public enum Color implements Named { RED, GREEN; public String hex() { return ""; } }`, { captureStatements: true });
   const color = cls(r, "Color");
-  check("G1 enum captured as a type node (type:enum)", color && color.type === "enum");
-  check("G1 enum implements edge captured", color && color.implements.includes("Named"));
-  check("G1 enum constants captured as statements", color && ["RED", "GREEN"].every(n => color.statements.some(s => s.type === "enum_constant" && s.name === n)));
-  check("G1 enum method owned by its type", color && color.methods.includes("hex"));
+  check("enum captured as a type node (type:enum)", color && color.type === "enum");
+  check("enum implements edge captured", color && color.implements.includes("Named"));
+  check("enum constants captured as statements", color && ["RED", "GREEN"].every(n => color.statements.some(s => s.type === "enum_constant" && s.name === n)));
+  check("enum method owned by its type", color && color.methods.includes("hex"));
 }
-// G2 — annotation type @interface (Java 5+): modelled as a type node; elements captured as methods.
+// annotation type @interface (Java 5+): modelled as a type node; elements captured as methods.
 {
   const r = run("Audited.java", `package p; public @interface Audited { String value() default ""; int level() default 0; }`);
   const audited = cls(r, "Audited");
-  check("G2 @interface captured as a type node (type:annotation)", audited && audited.type === "annotation");
-  check("G2 @interface elements captured as methods", audited && ["value", "level"].every(n => audited.methods.includes(n)));
+  check("@interface captured as a type node (type:annotation)", audited && audited.type === "annotation");
+  check("@interface elements captured as methods", audited && ["value", "level"].every(n => audited.methods.includes(n)));
 }
 
-// G3 — record (Java 16+): modelled as a type node; components map to constructorParams; implements + methods owned.
+// record (Java 16+): modelled as a type node; components map to constructorParams; implements + methods owned.
 {
   const r = run("Point.java", `package p; public record Point(int x, int y) implements Cmp { public int sum() { return x + y; } }`);
   const point = cls(r, "Point");
-  check("G3 record captured as a type node (type:record)", point && point.type === "record");
-  check("G3 record components captured as constructorParams", point && JSON.stringify(point.constructorParams) === JSON.stringify(["x", "y"]));
-  check("G3 record implements edge captured", point && point.implements.includes("Cmp"));
-  check("G3 record method owned by its type", point && point.methods.includes("sum"));
+  check("record captured as a type node (type:record)", point && point.type === "record");
+  check("record components captured as constructorParams", point && JSON.stringify(point.constructorParams) === JSON.stringify(["x", "y"]));
+  check("record implements edge captured", point && point.implements.includes("Cmp"));
+  check("record method owned by its type", point && point.methods.includes("sum"));
 }
 
-// G4 — generics: type parameters captured (raw text) on class and method `generics` field.
+// generics: type parameters captured (raw text) on class and method `generics` field.
 {
   const r = run("Box.java", `package p; public class Box<T extends Number> { public <R> R map() { return null; } }`);
   const box = cls(r, "Box");
   check("generic class name captured without angle brackets", box.name === "Box");
-  check("G4 class type parameters captured in generics", box.generics === "<T extends Number>");
-  check("G4 method type parameters captured in generics", fn(r, "map").generics === "<R>");
+  check("class type parameters captured in generics", box.generics === "<T extends Number>");
+  check("method type parameters captured in generics", fn(r, "map").generics === "<R>");
 }
 
-// G8 — module-info.java (Java 9+): module node + requires/exports directives + dependency edges.
+// module-info.java (Java 9+): module node + requires/exports directives + dependency edges.
 {
   const r = run("module-info.java", `module com.example.app { requires java.sql; requires transitive com.acme.api; exports com.example.api; }`, { captureStatements: true });
   const mod = r.classes.find((c) => c.type === "module");
-  check("G8 module captured as a type:module node", mod && mod.name === "com.example.app");
-  check("G8 requires directives captured", mod && ["java.sql", "com.acme.api"].every(n => mod.statements.some(s => s.type === "requires_module_directive" && s.name === n)));
-  check("G8 exports directive captured", mod && mod.statements.some(s => s.type === "exports_module_directive" && s.name === "com.example.api"));
-  check("G8 requires surface as dependency edges (externalImports)", ["java.sql", "com.acme.api"].every(n => r.imports.externalImports.includes(n)));
+  check("module captured as a type:module node", mod && mod.name === "com.example.app");
+  check("requires directives captured", mod && ["java.sql", "com.acme.api"].every(n => mod.statements.some(s => s.type === "requires_module_directive" && s.name === n)));
+  check("exports directive captured", mod && mod.statements.some(s => s.type === "exports_module_directive" && s.name === "com.example.api"));
+  check("requires surface as dependency edges (externalImports)", ["java.sql", "com.acme.api"].every(n => r.imports.externalImports.includes(n)));
 }
 
-// G9 — nested/anonymous-class return leaks into the enclosing method's statements.
+// nested/anonymous-class returns must stay with their own method, not leak into the enclosing one.
 {
   const r = run("Leak.java", `
 package p;
@@ -303,9 +299,9 @@ public class Leak {
   const runFn = fn(r, "run");
   const outerReturns = (outer.statements || []).filter((s) => s.type === "return_statement");
   // outer() owns only its own return (line 11); the nested run()'s return (line 8) must NOT leak in.
-  check("G9 nested-class return does not leak into enclosing method", outerReturns.every((s) => s.startLine !== 8));
-  check("G9 enclosing method keeps its own return", outerReturns.some((s) => s.startLine === 11));
-  check("G9 nested method owns its own return", (runFn.statements || []).some((s) => s.type === "return_statement" && s.startLine === 8));
+  check("nested-class return does not leak into enclosing method", outerReturns.every((s) => s.startLine !== 8));
+  check("enclosing method keeps its own return", outerReturns.some((s) => s.startLine === 11));
+  check("nested method owns its own return", (runFn.statements || []).some((s) => s.type === "return_statement" && s.startLine === 8));
 }
 
 // =====================================================================
