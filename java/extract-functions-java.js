@@ -350,6 +350,7 @@ function extractStatements(node, source) {
   collectReturnStatements(body, source, statements, seen);
 
   collectQueryStatements(node, source, statements);
+  collectApiStatements(node, source, statements);
 
   return statements;
 }
@@ -575,6 +576,7 @@ function extractFileStatements(filePath) {
   }
 
   collectQueryStatements(tree.rootNode, source, statements);
+  collectApiStatements(tree.rootNode, source, statements);
 
   return statements;
 }
@@ -625,4 +627,167 @@ function collectQueryStatements(node, source, statements) {
   });
 }
 
-module.exports = { extractFunctionsAndCalls, extractImports, extractFileStatements, collectQueryStatements, readDecorators };
+// ---------------------------------------------------------
+// Outbound HTTP (api_call) detection — Java HTTP clients.
+// Import-gated to avoid false positives on generic .get()/.send()/.put().
+// Covers:
+//   - java.net.http.HttpClient: the request *builder* carries the verb + URI
+//     (HttpRequest.newBuilder().uri(..).GET()); the later client.send(..) is
+//     just execution, so we capture the builder chain.
+//   - Spring RestTemplate: getForObject/postForEntity/exchange/put/delete/...
+//   - Spring WebClient: webClient.get()/post()..uri("..")..retrieve()
+// Verb -> method; first static URI -> endpoint (null when only a variable).
+// ---------------------------------------------------------
+const HTTP_VERBS = new Set(["GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"]);
+const REST_TEMPLATE_METHODS = {
+  getForObject: "GET", getForEntity: "GET",
+  postForObject: "POST", postForEntity: "POST", postForLocation: "POST",
+  put: "PUT", delete: "DELETE", patchForObject: "PATCH",
+  headForHeaders: "HEAD", optionsForAllow: "OPTIONS",
+  exchange: "ANY", execute: "ANY",
+};
+
+const miName = (node, source) => {
+  const n = node.childForFieldName("name");
+  return n ? source.slice(n.startIndex, n.endIndex) : null;
+};
+const miObject = (node) => node.childForFieldName("object");
+const miArgs = (node) => node.childForFieldName("arguments");
+const firstArg = (node) => {
+  const a = miArgs(node);
+  return a && a.namedChildCount ? a.namedChild(0) : null;
+};
+
+// Outermost method_invocation of a fluent chain (the call not itself the
+// receiver `object` of a further invocation). Compare by source position, not
+// node identity — the tree-sitter binding returns fresh Node wrappers per
+// access, so `===` between `.parent`'s object and `cur` is unreliable.
+function chainRoot(node) {
+  let cur = node;
+  while (cur.parent && cur.parent.type === "method_invocation") {
+    const obj = miObject(cur.parent);
+    if (!obj || obj.startIndex !== cur.startIndex || obj.endIndex !== cur.endIndex) break;
+    cur = cur.parent;
+  }
+  return cur;
+}
+// All invocations in a chain (outermost..innermost), walking down via `object`.
+function chainInvocations(root) {
+  const out = [];
+  let cur = root;
+  while (cur && cur.type === "method_invocation") { out.push(cur); cur = miObject(cur); }
+  return out;
+}
+// Deepest receiver text of the chain (e.g. "webClient", "this.restTemplate", "HttpRequest").
+function chainReceiver(root, source) {
+  let cur = root;
+  while (cur && cur.type === "method_invocation") {
+    const o = miObject(cur);
+    if (!o) return null;
+    cur = o;
+  }
+  return cur ? source.slice(cur.startIndex, cur.endIndex) : null;
+}
+// Static URL from a node: a string literal, or URI.create("..")/URI.of(".."); else null.
+function javaEndpoint(node, source) {
+  if (!node) return null;
+  if (node.type === "string_literal") return stringLiteralValue(node, source);
+  if (node.type === "method_invocation") {
+    const nm = miName(node, source);
+    if (nm === "create" || nm === "of") {
+      const a = firstArg(node);
+      if (a && a.type === "string_literal") return stringLiteralValue(a, source);
+    }
+  }
+  return null;
+}
+// First static endpoint from a uri(..)/url(..) call in the chain.
+function chainEndpoint(invocations, source) {
+  for (const inv of invocations) {
+    const nm = miName(inv, source);
+    if (nm === "uri" || nm === "url") {
+      const ep = javaEndpoint(firstArg(inv), source);
+      if (ep != null) return ep;
+    }
+  }
+  return null;
+}
+// HttpMethod.X (Spring) verb from RestTemplate.exchange's 2nd argument, else "ANY".
+function exchangeMethod(node, source) {
+  const a = miArgs(node);
+  if (a && a.namedChildCount > 1) {
+    const txt = source.slice(a.namedChild(1).startIndex, a.namedChild(1).endIndex);
+    const seg = txt.slice(txt.lastIndexOf(".") + 1).toUpperCase();
+    if (HTTP_VERBS.has(seg)) return seg;
+  }
+  return "ANY";
+}
+
+function collectApiStatements(node, source, statements) {
+  const hasHttpClient = source.includes("java.net.http");
+  const hasRestTemplate = source.includes("RestTemplate");
+  const hasWebClient = source.includes("WebClient");
+  if (!hasHttpClient && !hasRestTemplate && !hasWebClient) return;
+
+  // Dedup only against other api_call statements — NOT against the
+  // declaration/return that merely *contains* the call (e.g.
+  // `return restTemplate.getForObject(..)` or `HttpRequest r = ..build();`),
+  // which share the call's line range and would otherwise suppress it.
+  const seen = new Set(
+    statements.filter(s => s.type === "api_call").map(s => `${s.startLine}:${s.endLine}`)
+  );
+  const seenRoots = new Set();
+  const push = (method, endpoint, n) => {
+    const key = `${n.startPosition.row + 1}:${n.endPosition.row + 1}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    statements.push({
+      type: "api_call",
+      method,
+      endpoint: endpoint != null ? endpoint : null,
+      text: source.slice(n.startIndex, n.endIndex).slice(0, 500),
+      startLine: n.startPosition.row + 1,
+      endLine: n.endPosition.row + 1,
+    });
+  };
+
+  traverse(node, (n) => {
+    if (n.type !== "method_invocation") return;
+    const name = miName(n, source);
+    if (!name) return;
+
+    // Spring RestTemplate — single-call form (verb encoded in the method name).
+    if (hasRestTemplate && REST_TEMPLATE_METHODS[name]) {
+      const obj = miObject(n);
+      const recv = obj ? source.slice(obj.startIndex, obj.endIndex) : "";
+      if (/restTemplate/i.test(recv)) {
+        const method = name === "exchange" || name === "execute" ? exchangeMethod(n, source) : REST_TEMPLATE_METHODS[name];
+        push(method, javaEndpoint(firstArg(n), source), n);
+      }
+      return;
+    }
+
+    // Chain-based clients (java.net.http builder, Spring WebClient) — act at the verb.
+    const isUpperVerb = HTTP_VERBS.has(name);                       // GET()/POST() (java.net.http)
+    const isLowerVerb = name === name.toLowerCase() && HTTP_VERBS.has(name.toUpperCase()); // get()/post() (WebClient)
+    if (!isUpperVerb && !isLowerVerb) return;
+
+    const root = chainRoot(n);
+    if (seenRoots.has(root.startIndex)) return;
+    const invs = chainInvocations(root);
+    const names = new Set(invs.map(i => miName(i, source)));
+
+    if (hasHttpClient && isUpperVerb && names.has("newBuilder")) {
+      seenRoots.add(root.startIndex);
+      push(name.toUpperCase(), chainEndpoint(invs, source), root);
+      return;
+    }
+    const recv = chainReceiver(root, source) || "";
+    if (hasWebClient && /webClient/i.test(recv)) {
+      seenRoots.add(root.startIndex);
+      push(name.toUpperCase(), chainEndpoint(invs, source), root);
+    }
+  });
+}
+
+module.exports = { extractFunctionsAndCalls, extractImports, extractFileStatements, collectQueryStatements, collectApiStatements, readDecorators };

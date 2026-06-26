@@ -127,4 +127,62 @@ public class Box<T> {
     byName(fns, "mapAll").returnType === "List<R>");
 });
 
+// ------------------------------------------- outbound api_call (#2) --------
+const apiOf = (fn) => (fn.statements || []).filter((s) => s.type === "api_call");
+
+withTempRepo("Clients.java", `
+package com.example;
+import org.springframework.web.client.RestTemplate;
+import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.http.HttpMethod;
+public class Clients {
+  private final RestTemplate restTemplate = new RestTemplate();
+  private final WebClient webClient = WebClient.create();
+  public User get() { return restTemplate.getForObject("https://svc/users/1", User.class); }
+  public void post(User u) { restTemplate.postForEntity("https://svc/users", u, User.class); }
+  public void ex() { restTemplate.exchange("https://svc/x", HttpMethod.DELETE, null, String.class); }
+  public Mono<User> wc() { return webClient.get().uri("/api/items/42").retrieve().bodyToMono(User.class); }
+  public Object notHttp() { return cache.get("key"); }
+}
+`, (dir, file) => {
+  const fns = extractFunctionsAndCalls(file, dir, {}, false, true);
+  const one = (n) => apiOf(byName(fns, n))[0];
+  check("api_call: RestTemplate getForObject -> GET + literal endpoint (in a return)",
+    one("get") && one("get").method === "GET" && one("get").endpoint === "https://svc/users/1");
+  check("api_call: RestTemplate postForEntity -> POST",
+    one("post") && one("post").method === "POST" && one("post").endpoint === "https://svc/users");
+  check("api_call: RestTemplate exchange reads HttpMethod.X verb",
+    one("ex") && one("ex").method === "DELETE");
+  check("api_call: WebClient fluent chain -> verb + uri() endpoint (full chain captured)",
+    one("wc") && one("wc").method === "GET" && one("wc").endpoint === "/api/items/42");
+  check("api_call: no false positive on generic .get()",
+    apiOf(byName(fns, "notHttp")).length === 0);
+});
+
+withTempRepo("HttpClientDemo.java", `
+package com.example;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.URI;
+public class HttpClientDemo {
+  private final HttpClient client = HttpClient.newHttpClient();
+  public String getSync(String url) throws Exception {
+    HttpRequest request = HttpRequest.newBuilder().uri(URI.create(url)).GET().build();
+    return client.send(request, java.net.http.HttpResponse.BodyHandlers.ofString()).body();
+  }
+  public void getLiteral() throws Exception {
+    HttpRequest r = HttpRequest.newBuilder().uri(URI.create("https://api/health")).GET().build();
+    client.send(r, java.net.http.HttpResponse.BodyHandlers.ofString());
+  }
+}
+`, (dir, file) => {
+  const fns = extractFunctionsAndCalls(file, dir, {}, false, true);
+  const sync = apiOf(byName(fns, "getSync"))[0];
+  check("api_call: java.net.http builder -> verb captured, variable URI -> null endpoint",
+    sync && sync.method === "GET" && sync.endpoint === null);
+  const lit = apiOf(byName(fns, "getLiteral"))[0];
+  check("api_call: java.net.http builder -> URI.create literal endpoint",
+    lit && lit.method === "GET" && lit.endpoint === "https://api/health");
+});
+
 console.log(`\n✅ All ${passed} assertions passed.`);
