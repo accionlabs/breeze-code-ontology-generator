@@ -3,7 +3,7 @@ const Java = require("tree-sitter-java");
 const fs = require("fs");
 const path = require("path");
 const { parseSource } = require("../utils");
-const { collectQueryStatements } = require("./extract-functions-java");
+const { collectQueryStatements, readDecorators } = require("./extract-functions-java");
 
 const sharedParser = new Parser();
 sharedParser.setLanguage(Java);
@@ -143,7 +143,7 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
   }
 
   const { visibility, isAbstract } = getClassModifiers(node, source);
-  const decorators = extractDecorators(node, source);
+  const decorators = readDecorators(node, source);
   const generics = extractGenerics(node, source);
 
   const statements = captureStatements ? extractClassStatements(node, source) : [];
@@ -163,22 +163,6 @@ function extractClassInfo(node, filePath, repoPath = null, source, captureStatem
     startLine,
     endLine
   };
-}
-
-function extractDecorators(node, source) {
-  const decorators = [];
-  for (let i = 0; i < node.childCount; i++) {
-    const child = node.child(i);
-    if (child.type === "modifiers") {
-      for (let j = 0; j < child.childCount; j++) {
-        const modifier = child.child(j);
-        if (modifier.type === "marker_annotation" || modifier.type === "annotation") {
-          decorators.push(source.slice(modifier.startIndex, modifier.endIndex));
-        }
-      }
-    }
-  }
-  return decorators;
 }
 
 function getClassName(node, source) {

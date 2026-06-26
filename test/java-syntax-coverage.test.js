@@ -117,7 +117,7 @@ public class Anno {
     public String get(@PathVariable("id") String id, @RequestBody Dto body) { return null; }
 }
 `);
-  check("class annotations captured", JSON.stringify(cls(r, "Anno").decorators) === JSON.stringify(["@RestController", '@RequestMapping("/api")']));
+  check("class annotations captured", JSON.stringify(cls(r, "Anno").decorators) === JSON.stringify([{ name: "RestController", args: [] }, { name: "RequestMapping", args: ["/api"] }]));
   check("method annotation name+args captured", JSON.stringify(fn(r, "get").decorators) === JSON.stringify([{ name: "GetMapping", args: ["/{id}"] }]));
   const get = fn(r, "get");
   const idp = get.params.find((p) => p.name === "id");

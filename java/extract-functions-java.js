@@ -613,4 +613,4 @@ function collectQueryStatements(node, source, statements) {
   });
 }
 
-module.exports = { extractFunctionsAndCalls, extractImports, extractFileStatements, collectQueryStatements };
+module.exports = { extractFunctionsAndCalls, extractImports, extractFileStatements, collectQueryStatements, readDecorators };
