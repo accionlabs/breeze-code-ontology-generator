@@ -598,8 +598,11 @@ function collectQueryStatements(node, source, statements) {
         const key = `${n.startPosition.row + 1}:${n.endPosition.row + 1}`;
         if (!seen.has(key)) {
           seen.add(key);
+          const objNode = n.childForFieldName("object");
           statements.push({
             type: "db_method_call", db,
+            method: methodName,                              // db method name (e.g. findById)
+            object: objNode ? source.slice(objNode.startIndex, objNode.endIndex) : null, // receiver (e.g. repo); null for bare calls
             text: source.slice(n.startIndex, n.endIndex).slice(0, 500),
             startLine: n.startPosition.row + 1,
             endLine: n.endPosition.row + 1,

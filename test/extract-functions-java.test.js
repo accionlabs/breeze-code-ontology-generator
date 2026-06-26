@@ -185,4 +185,24 @@ public class HttpClientDemo {
     lit && lit.method === "GET" && lit.endpoint === "https://api/health");
 });
 
+// ------------------------------------------ db_method_call fields (#3) -----
+withTempRepo("Dao.java", `
+package com.example;
+public class Dao {
+  private UserRepository repo;
+  public User one(Long id) { return repo.findById(id); }
+  public User two(Long id) { return this.repo.findOne(id); }
+  public List<User> all() { return findAll(); }
+}
+`, (dir, file) => {
+  const fns = extractFunctionsAndCalls(file, dir, {}, false, true);
+  const db = (n) => (byName(fns, n).statements || []).find((s) => s.type === "db_method_call");
+  check("db_method_call: method + receiver object captured",
+    db("one") && db("one").method === "findById" && db("one").object === "repo");
+  check("db_method_call: chained receiver kept verbatim",
+    db("two") && db("two").method === "findOne" && db("two").object === "this.repo");
+  check("db_method_call: object is null for a bare (receiver-less) call",
+    db("all") && db("all").method === "findAll" && db("all").object === null);
+});
+
 console.log(`\n✅ All ${passed} assertions passed.`);
