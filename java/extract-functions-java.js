@@ -44,6 +44,7 @@ function extractFunctionInfo(node, filePath, repoPath = null, source, captureSou
   const { visibility, kind } = getFunctionModifiers(node, source);
   const decorators = readDecorators(node, source);
   const generics = extractGenerics(node, source);
+  const returnType = extractReturnType(node, source);
 
   const statements = captureStatements ? extractStatements(node, source) : [];
 
@@ -55,6 +56,7 @@ function extractFunctionInfo(node, filePath, repoPath = null, source, captureSou
     generics,  // raw method type-parameter text, e.g. "<R>"; null if none
     decorators,  // [{ name, args }] — method-level annotations (with args)
     params,  // Now returns string array
+    returnType,  // declared return type text ("void"/"User"/"List<String>"); null for constructors
     startLine,
     endLine,
     calls,
@@ -258,6 +260,16 @@ function extractGenerics(node, source) {
     const child = node.child(i);
     if (child.type === "type_parameters") return source.slice(child.startIndex, child.endIndex);
   }
+  return null;
+}
+
+// Declared return type text of a method. The Java grammar exposes it as the
+// `type` field on method_declaration (e.g. void_type -> "void", or "User",
+// "List<String>"). constructor_declaration has no `type` field, so this returns
+// null for constructors — matching the TypeScript extractor's convention.
+function extractReturnType(node, source) {
+  const typeNode = node.childForFieldName("type");
+  if (typeNode) return source.slice(typeNode.startIndex, typeNode.endIndex);
   return null;
 }
 

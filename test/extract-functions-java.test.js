@@ -75,6 +75,12 @@ public class SampleController {
     paramOf(create, "body").type === "UserDto" &&
     paramOf(create, "body").decorators[0].name === "RequestBody");
 
+  // ---- return type (#1) ----
+  check("returnType: declared type captured",
+    byName(fns, "get").returnType === "User");
+  check("returnType: void captured verbatim",
+    byName(fns, "update").returnType === "void");
+
   // ---- present-only + varargs ----
   check("param: decorators key omitted when none (present-only)",
     !("decorators" in paramOf(create, "request")) &&
@@ -103,6 +109,22 @@ public class OrderResource {
   check("jaxrs param: @QueryParam nested with arg",
     paramOf(find, "expand").decorators[0].name === "QueryParam" &&
     paramOf(find, "expand").type === "boolean");
+});
+
+// ------------------------------------------------- return type (#1) --------
+withTempRepo("Box.java", `
+package com.example;
+public class Box<T> {
+    public Box(T value) {}
+    public <R> List<R> mapAll(R seed) { return null; }
+}
+`, (dir, file) => {
+  const fns = extractFunctionsAndCalls(file, dir, {}, false, false);
+  check("returnType: null for constructors",
+    byName(fns, "Box").type === "constructor" &&
+    byName(fns, "Box").returnType === null);
+  check("returnType: generic return type captured verbatim",
+    byName(fns, "mapAll").returnType === "List<R>");
 });
 
 console.log(`\n✅ All ${passed} assertions passed.`);
