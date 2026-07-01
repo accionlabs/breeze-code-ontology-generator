@@ -27,7 +27,10 @@ const SIGNATURES = [
       [/\bSTORAGE\s*\(/i, 2],
       [/\bPLS_INTEGER\b/i, 4],
       [/\bBEGIN\b[\s\S]+?\bEND\s*;[\s\S]*?^\s*\/\s*$/im, 4],
-      [/\bENABLE\s+VALIDATE\b/i, 3],
+      [/\b(?:ENABLE|DISABLE)\s+(?:NO)?VALIDATE\b/i, 3],
+      // Trailing Oracle constraint state, e.g. `... ("ID") DISABLE;` — common in
+      // Oracle ALTER TABLE … ADD CONSTRAINT delta dumps that carry no type keywords.
+      [/\)\s+(?:ENABLE|DISABLE)\s*;/i, 3],
       [/\bGLOBAL\s+TEMPORARY\s+TABLE\b/i, 3],
       [/\bBITMAP\s+INDEX\b/i, 3],
       [/\bCREATE\s+OR\s+REPLACE\s+(?:EDITIONABLE\s+|NONEDITIONABLE\s+)?(?:PROCEDURE|FUNCTION|PACKAGE|TRIGGER)\b/i, 3],

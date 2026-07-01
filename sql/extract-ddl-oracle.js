@@ -1170,8 +1170,8 @@ function parseAlterTableModifyColumn(stmt) {
   const modifications = [];
 
   for (const def of defs) {
-    const result = parseColumnDef(def, tableName);
-    if (result) modifications.push(result.column);
+    const mod = parseModifyColumnClause(def, tableName);
+    if (mod) modifications.push(mod);
   }
 
   if (modifications.length === 0) return null;
@@ -1235,6 +1235,221 @@ function parseAlterTableRenameColumn(stmt) {
   };
 }
 
+/**
+ * Parse `ALTER TABLE [schema.]old RENAME TO new` (table rename).
+ * Distinct from RENAME COLUMN — here `RENAME TO` follows the table name
+ * directly with no COLUMN keyword.
+ */
+function parseAlterTableRenameTable(stmt) {
+  const re = new RegExp(
+    '^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(?:(' + IDENT_RE_SRC + ')\\.)?(' + IDENT_RE_SRC + ')\\s+RENAME\\s+TO\\s+(' + IDENT_RE_SRC + ')',
+    'i'
+  );
+  const m = stmt.match(re);
+  if (!m) return null;
+  return {
+    schema: m[1] ? unquoteIdent(m[1]) : null,
+    oldName: unquoteIdent(m[2]),
+    newName: unquoteIdent(m[3]),
+  };
+}
+
+/**
+ * Parse `DROP TABLE [schema.]name [CASCADE CONSTRAINTS] [PURGE]`.
+ * Only the object identity is needed — the graph delete cascades children.
+ */
+function parseDropTable(stmt) {
+  const re = new RegExp(
+    '^DROP\\s+TABLE\\s+(?:IF\\s+EXISTS\\s+)?(?:(' + IDENT_RE_SRC + ')\\.)?(' + IDENT_RE_SRC + ')',
+    'i'
+  );
+  const m = stmt.match(re);
+  if (!m) return null;
+  return {
+    schema: m[1] ? unquoteIdent(m[1]) : null,
+    tableName: unquoteIdent(m[2]),
+  };
+}
+
+/**
+ * Parse `ALTER TABLE [schema.]name RENAME CONSTRAINT old TO new`.
+ */
+function parseAlterTableRenameConstraint(stmt) {
+  const re = new RegExp(
+    '^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(?:(' + IDENT_RE_SRC + ')\\.)?(' + IDENT_RE_SRC + ')\\s+RENAME\\s+CONSTRAINT\\s+(' + IDENT_RE_SRC + ')\\s+TO\\s+(' + IDENT_RE_SRC + ')',
+    'i'
+  );
+  const m = stmt.match(re);
+  if (!m) return null;
+  return {
+    schema: m[1] ? unquoteIdent(m[1]) : null,
+    tableName: unquoteIdent(m[2]),
+    oldName: unquoteIdent(m[3]),
+    newName: unquoteIdent(m[4]),
+  };
+}
+
+/**
+ * Parse an unnamed constraint drop: `ALTER TABLE t DROP PRIMARY KEY` or
+ * `ALTER TABLE t DROP UNIQUE (col, ...)`. Resolved downstream by type (PK) or
+ * by the covered column set (UNIQUE), since no constraint name is given.
+ */
+function parseAlterTableDropUnnamedConstraint(stmt) {
+  const pkRe = new RegExp(
+    '^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(?:(' + IDENT_RE_SRC + ')\\.)?(' + IDENT_RE_SRC + ')\\s+DROP\\s+PRIMARY\\s+KEY',
+    'i'
+  );
+  const pk = stmt.match(pkRe);
+  if (pk) {
+    return {
+      schema: pk[1] ? unquoteIdent(pk[1]) : null,
+      tableName: unquoteIdent(pk[2]),
+      constraintType: 'PRIMARY_KEY',
+      columns: null,
+    };
+  }
+  const uqRe = new RegExp(
+    '^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(?:(' + IDENT_RE_SRC + ')\\.)?(' + IDENT_RE_SRC + ')\\s+DROP\\s+UNIQUE\\s*\\(([^)]+)\\)',
+    'i'
+  );
+  const uq = stmt.match(uqRe);
+  if (uq) {
+    return {
+      schema: uq[1] ? unquoteIdent(uq[1]) : null,
+      tableName: unquoteIdent(uq[2]),
+      constraintType: 'UNIQUE',
+      columns: splitColList(uq[3]),
+    };
+  }
+  return null;
+}
+
+/**
+ * Parse Oracle's soft-drop: `ALTER TABLE t SET UNUSED COLUMN c` or
+ * `ALTER TABLE t SET UNUSED (c1, c2)`. A column marked UNUSED is logically
+ * gone (invisible, unrecoverable), so we treat it as a column drop. The later
+ * `DROP UNUSED COLUMNS` physical cleanup is then a graph no-op.
+ */
+function parseAlterTableSetUnused(stmt) {
+  const single = new RegExp(
+    '^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(?:(' + IDENT_RE_SRC + ')\\.)?(' + IDENT_RE_SRC + ')\\s+SET\\s+UNUSED\\s+COLUMN\\s+(' + IDENT_RE_SRC + ')',
+    'i'
+  );
+  const m1 = stmt.match(single);
+  if (m1) {
+    return {
+      schema: m1[1] ? unquoteIdent(m1[1]) : null,
+      tableName: unquoteIdent(m1[2]),
+      columns: [unquoteIdent(m1[3])],
+    };
+  }
+  const multi = new RegExp(
+    '^ALTER\\s+TABLE\\s+(?:ONLY\\s+)?(?:(' + IDENT_RE_SRC + ')\\.)?(' + IDENT_RE_SRC + ')\\s+SET\\s+UNUSED\\s*\\(([^)]+)\\)',
+    'i'
+  );
+  const m2 = stmt.match(multi);
+  if (m2) {
+    return {
+      schema: m2[1] ? unquoteIdent(m2[1]) : null,
+      tableName: unquoteIdent(m2[2]),
+      columns: splitColList(m2[3]),
+    };
+  }
+  return null;
+}
+
+/**
+ * Parse legacy `RENAME old TO new` (no ALTER TABLE, current schema only).
+ */
+function parseRenameTableLegacy(stmt) {
+  const re = new RegExp(
+    '^RENAME\\s+(' + IDENT_RE_SRC + ')\\s+TO\\s+(' + IDENT_RE_SRC + ')',
+    'i'
+  );
+  const m = stmt.match(re);
+  if (!m) return null;
+  return { oldName: unquoteIdent(m[1]), newName: unquoteIdent(m[2]) };
+}
+
+/**
+ * Parse ONE column clause of an `ALTER TABLE … MODIFY (…)` statement into a
+ * modification that carries ONLY the properties the statement explicitly set.
+ *
+ * MODIFY semantics differ from CREATE/ADD: an unstated property is left
+ * unchanged, not reset to a default. So `MODIFY (c VARCHAR2(40))` must NOT flip
+ * nullability, and `MODIFY (c NOT NULL)` / `MODIFY (c DEFAULT x)` must NOT
+ * overwrite the data type. parseColumnDef (built for CREATE) always emits a
+ * dataType + nullable default, so here we consult the raw clause to decide
+ * which of its outputs were actually specified.
+ */
+function parseModifyColumnClause(def, tableName) {
+  const parsed = parseColumnDef(def, tableName);
+  if (!parsed || !parsed.column) return null;
+  const col = parsed.column;
+
+  const nameMatch = def.trim().match(new RegExp('^(' + IDENT_RE_SRC + ')\\s+([\\s\\S]+)$'));
+  const rest = nameMatch ? nameMatch[2] : '';
+
+  const mod = { name: col.name };
+
+  // Data type: only when the first token after the column name is a real type,
+  // not a clause keyword (NOT/NULL/DEFAULT/…). Guards against parseColumnDef
+  // mis-reading `NOT` or `DEFAULT` as the type.
+  const firstTokenMatch = rest.match(/^\s*([A-Za-z_][A-Za-z0-9_$#]*)/);
+  const CLAUSE_KW = /^(NOT|NULL|DEFAULT|GENERATED|CONSTRAINT|PRIMARY|UNIQUE|CHECK|REFERENCES|VISIBLE|INVISIBLE|ENCRYPT|ENABLE|DISABLE)$/i;
+  const hasType = firstTokenMatch && !CLAUSE_KW.test(firstTokenMatch[1]);
+  if (hasType && col.dataType && col.dataType !== 'UNKNOWN') {
+    mod.dataType = col.dataType;
+    if (col.length != null) mod.length = col.length;
+    if (col.precision != null) mod.precision = col.precision;
+    if (col.scale != null) mod.scale = col.scale;
+    if (col.charSemantics) mod.charSemantics = col.charSemantics;
+  }
+
+  // Nullability: only when explicitly stated. Detect on the clause with all
+  // parenthesized groups stripped, so a NULL / NOT NULL inside a CHECK
+  // expression (e.g. `CHECK (c IS NOT NULL)`) or a DEFAULT function call does
+  // not get read as a column-level nullability change. Also skip inference when
+  // a DEFAULT clause is present so `DEFAULT NULL` / `DEFAULT ON NULL …` don't
+  // read as "make nullable".
+  const hasDefault = /\bDEFAULT\b/i.test(rest);
+  let restNoParens = rest;
+  let prev;
+  do { prev = restNoParens; restNoParens = restNoParens.replace(/\([^()]*\)/g, ' '); } while (restNoParens !== prev);
+  // Any '(' left after stripping all balanced groups is an unbalanced/malformed
+  // open paren; ignore everything from it on so stray tokens inside a truncated
+  // expression (e.g. a lone NULL) can't flip nullability.
+  const unbalanced = restNoParens.indexOf('(');
+  if (unbalanced !== -1) restNoParens = restNoParens.slice(0, unbalanced);
+  if (/\bNOT\s+NULL\b/i.test(restNoParens)) {
+    mod.nullable = false;
+  } else if (!hasDefault && /\bNULL\b/i.test(restNoParens)) {
+    mod.nullable = true;
+  }
+
+  // Default: only when a DEFAULT clause is present.
+  if (hasDefault && col.defaultValue !== undefined) {
+    mod.defaultValue = col.defaultValue;
+    mod.defaultKind = col.defaultKind;
+  }
+
+  // Inline CHECK added/changed by the MODIFY (backend updateColumn accepts it).
+  if (col.checkExpression) mod.checkExpression = col.checkExpression;
+
+  // Identity / virtual conversions (rare, but must not be silently dropped —
+  // parseColumnDef detects them and the snapshot merge applies them).
+  if (col.isIdentity) {
+    mod.isIdentity = true;
+    mod.identityGeneration = col.identityGeneration;
+  }
+  if (col.isVirtual) {
+    mod.isVirtual = true;
+    mod.virtualExpression = col.virtualExpression;
+  }
+
+  return mod;
+}
+
 // -----------------------------------------------------------
 // Utility
 // -----------------------------------------------------------
@@ -1269,6 +1484,13 @@ function parseOracleDDL(ddlText) {
   const procedures = [];
   const indexes = [];
   const sequences = [];
+  // Ordered, structured delta operations (ALTER TABLE … / DROP TABLE). Emitted
+  // alongside the full snapshot so the backend can apply schema changes to
+  // existing graph nodes even when the CREATE TABLE isn't in this file (an
+  // ALTER-only delta dump from the RDS change feed). See applyAlterOps on the
+  // ingest side. Full-file re-onboarding still relies on `tables` (the snapshot);
+  // replaying these ops on top is idempotent (add=MERGE, drop/rename=skip-if-gone).
+  const alterOps = [];
   const commentMap = { tables: {}, columns: {} };
 
   const tableMap = {}; // name → table object, for post-processing comments
@@ -1284,6 +1506,7 @@ function parseOracleDDL(ddlText) {
       table: 0, view: 0, procedure: 0, index: 0, sequence: 0,
       comment: 0, alterAdd: 0, alterDrop: 0,
       alterAddColumn: 0, alterModifyColumn: 0, alterDropColumn: 0, alterRenameColumn: 0,
+      alterRenameTable: 0, alterRenameConstraint: 0, dropTable: 0,
     },
   };
 
@@ -1352,9 +1575,22 @@ function parseOracleDDL(ddlText) {
         if (c.target === 'table') {
           commentMap.tables[c.name] = c.comment;
           if (c.schema) commentMap.tables[`${c.schema}.${c.name}`] = c.comment;
+          alterOps.push({
+            op: 'commentTable',
+            schema: c.schema || null,
+            table: c.name,
+            comment: c.comment,
+          });
         } else if (c.target === 'column') {
           const key = `${c.tableName}.${c.columnName}`;
           commentMap.columns[key] = c.comment;
+          alterOps.push({
+            op: 'commentColumn',
+            schema: c.schema || null,
+            table: c.tableName,
+            column: c.columnName,
+            comment: c.comment,
+          });
         }
         parseReport.parsed++;
         parseReport.byKind.comment++;
@@ -1363,7 +1599,17 @@ function parseOracleDDL(ddlText) {
       }
     } else if (upper.startsWith('ALTER')) {
       // Snapshot semantics: apply all ALTER TABLE mutations in file order so
-      // re-parsing the same file always yields the same final state.
+      // re-parsing the same file (with the CREATE TABLE present) always yields
+      // the same final state.
+      //
+      // Delta semantics: additionally record each ALTER as a structured op in
+      // `alterOps`. For an ALTER-only delta dump (no CREATE TABLE in this file)
+      // the snapshot mutation below is a no-op — `findTable` returns null — but
+      // the op is still emitted so the backend can apply it against the existing
+      // graph node. We deliberately do NOT synthesize a partial table stub here:
+      // a thin stub would clobber the real table's scalar props (columnCount,
+      // hasPrimaryKey, ddlText, id) on the backend's `SET t += r` merge. The
+      // structured op carries exactly the mutation instead.
 
       // Helper to look up a table by name (with optional schema prefix)
       function findTable(name, schema) {
@@ -1402,9 +1648,45 @@ function parseOracleDDL(ddlText) {
           tbl.constraints = tbl.constraints.filter(c => c.name !== dropCon.constraintName);
           recomputeColumnFlags(tbl);
         }
+        alterOps.push({
+          op: 'dropConstraint',
+          schema: dropCon.schema || null,
+          table: dropCon.tableName,
+          constraintName: dropCon.constraintName,
+        });
         parseReport.parsed++;
         parseReport.byKind.alterDrop++;
         handled = true;
+      }
+
+      // --- DROP PRIMARY KEY / DROP UNIQUE (cols) --- (unnamed constraint drop)
+      if (!handled) {
+        const dropUnnamed = parseAlterTableDropUnnamedConstraint(stripped);
+        if (dropUnnamed) {
+          const tbl = findTable(dropUnnamed.tableName, dropUnnamed.schema);
+          if (tbl) {
+            tbl.constraints = tbl.constraints.filter(c => {
+              if (c.constraintType !== dropUnnamed.constraintType) return true;
+              if (dropUnnamed.columns == null) return false; // drop by type (PK)
+              // UNIQUE: drop the constraint covering exactly these columns
+              const cols = (c.columns || []).slice().sort();
+              const target = dropUnnamed.columns.slice().sort();
+              return !(cols.length === target.length && cols.every((x, i) => x === target[i]));
+            });
+            recomputeColumnFlags(tbl);
+          }
+          alterOps.push({
+            op: 'dropConstraint',
+            schema: dropUnnamed.schema || null,
+            table: dropUnnamed.tableName,
+            constraintName: null,
+            constraintType: dropUnnamed.constraintType,
+            columns: dropUnnamed.columns,
+          });
+          parseReport.parsed++;
+          parseReport.byKind.alterDrop++;
+          handled = true;
+        }
       }
 
       // --- DROP COLUMN ---
@@ -1424,6 +1706,40 @@ function parseOracleDDL(ddlText) {
             tbl.columns.forEach((c, i) => { c.ordinalPosition = i + 1; });
             recomputeColumnFlags(tbl);
           }
+          // Handles both `DROP COLUMN c` and Oracle's multi-column `DROP (c1, c2)`.
+          alterOps.push({
+            op: 'dropColumn',
+            schema: dropCol.schema || null,
+            table: dropCol.tableName,
+            columns: dropCol.columns,
+          });
+          parseReport.parsed++;
+          parseReport.byKind.alterDropColumn++;
+          handled = true;
+        }
+      }
+
+      // --- SET UNUSED COLUMN --- (Oracle soft-drop → treat as a column drop)
+      if (!handled) {
+        const unused = parseAlterTableSetUnused(stripped);
+        if (unused) {
+          const tbl = findTable(unused.tableName, unused.schema);
+          if (tbl) {
+            tbl.columns = tbl.columns.filter(c => !unused.columns.includes(c.name));
+            tbl.constraints = tbl.constraints.filter(c => {
+              if (!c.columns) return true;
+              return !c.columns.some(col => unused.columns.includes(col));
+            });
+            tbl.columnCount = tbl.columns.length;
+            tbl.columns.forEach((c, i) => { c.ordinalPosition = i + 1; });
+            recomputeColumnFlags(tbl);
+          }
+          alterOps.push({
+            op: 'dropColumn',
+            schema: unused.schema || null,
+            table: unused.tableName,
+            columns: unused.columns,
+          });
           parseReport.parsed++;
           parseReport.byKind.alterDropColumn++;
           handled = true;
@@ -1451,8 +1767,63 @@ function parseOracleDDL(ddlText) {
               delete commentMap.columns[ck];
             }
           }
+          alterOps.push({
+            op: 'renameColumn',
+            schema: renamCol.schema || null,
+            table: renamCol.tableName,
+            oldName: renamCol.oldName,
+            newName: renamCol.newName,
+          });
           parseReport.parsed++;
           parseReport.byKind.alterRenameColumn++;
+          handled = true;
+        }
+      }
+
+      // --- RENAME CONSTRAINT ---
+      if (!handled) {
+        const renamCon = parseAlterTableRenameConstraint(stripped);
+        if (renamCon) {
+          const tbl = findTable(renamCon.tableName, renamCon.schema);
+          if (tbl) {
+            const con = tbl.constraints.find(c => c.name === renamCon.oldName);
+            if (con) con.name = renamCon.newName;
+          }
+          alterOps.push({
+            op: 'renameConstraint',
+            schema: renamCon.schema || null,
+            table: renamCon.tableName,
+            oldName: renamCon.oldName,
+            newName: renamCon.newName,
+          });
+          parseReport.parsed++;
+          parseReport.byKind.alterRenameConstraint++;
+          handled = true;
+        }
+      }
+
+      // --- RENAME TABLE --- (ALTER TABLE old RENAME TO new)
+      if (!handled) {
+        const renamTbl = parseAlterTableRenameTable(stripped);
+        if (renamTbl) {
+          const tbl = findTable(renamTbl.oldName, renamTbl.schema);
+          if (tbl) {
+            // Rekey the snapshot so a same-file CREATE + RENAME emits the new name.
+            delete tableMap[tbl.name];
+            if (tbl.fullName) delete tableMap[tbl.fullName];
+            tbl.name = renamTbl.newName;
+            tbl.fullName = renamTbl.schema ? `${renamTbl.schema}.${renamTbl.newName}` : renamTbl.newName;
+            tableMap[tbl.name] = tbl;
+            if (renamTbl.schema) tableMap[tbl.fullName] = tbl;
+          }
+          alterOps.push({
+            op: 'renameTable',
+            schema: renamTbl.schema || null,
+            oldName: renamTbl.oldName,
+            newName: renamTbl.newName,
+          });
+          parseReport.parsed++;
+          parseReport.byKind.alterRenameTable++;
           handled = true;
         }
       }
@@ -1476,6 +1847,13 @@ function parseOracleDDL(ddlText) {
             tbl.columnCount = tbl.columns.length;
             recomputeColumnFlags(tbl);
           }
+          alterOps.push({
+            op: 'addColumn',
+            schema: addCol.schema || null,
+            table: addCol.tableName,
+            columns: addCol.columns,
+            constraints: addCol.inlineConstraints || [],
+          });
           parseReport.parsed++;
           parseReport.byKind.alterAddColumn++;
           handled = true;
@@ -1497,8 +1875,9 @@ function parseOracleDDL(ddlText) {
                 if (mod.precision != null) existing.precision = mod.precision;
                 if (mod.scale != null) existing.scale = mod.scale;
                 if (mod.charSemantics) existing.charSemantics = mod.charSemantics;
-                // nullable: only override if MODIFY explicitly sets NOT NULL or NULL
-                existing.nullable = mod.nullable;
+                // nullable: only override when the MODIFY explicitly set NULL/NOT NULL
+                // (parseModifyColumnClause omits it otherwise).
+                if (mod.nullable !== undefined) existing.nullable = mod.nullable;
                 if (mod.defaultValue !== undefined) {
                   existing.defaultValue = mod.defaultValue;
                   existing.defaultKind = mod.defaultKind;
@@ -1514,6 +1893,12 @@ function parseOracleDDL(ddlText) {
               }
             }
           }
+          alterOps.push({
+            op: 'modifyColumn',
+            schema: modCol.schema || null,
+            table: modCol.tableName,
+            modifications: modCol.modifications,
+          });
           parseReport.parsed++;
           parseReport.byKind.alterModifyColumn++;
           handled = true;
@@ -1532,14 +1917,80 @@ function parseOracleDDL(ddlText) {
               recomputeColumnFlags(tbl);
             }
           }
+          alterOps.push({
+            op: 'addConstraint',
+            schema: alt.schema || null,
+            table: alt.tableName,
+            constraint: alt.constraint,
+          });
           parseReport.parsed++;
           parseReport.byKind.alterAdd++;
           handled = true;
         }
       }
 
+      // --- DROP UNUSED COLUMNS --- (physical cleanup after SET UNUSED; the
+      // columns were already dropped from the graph at SET UNUSED time, so this
+      // is a recognized no-op rather than an unparsed skip).
+      if (!handled && /^ALTER\s+TABLE\s+[\s\S]+\bDROP\s+UNUSED\s+COLUMNS\b/i.test(stripped)) {
+        parseReport.parsed++;
+        parseReport.byKind.alterDropColumn++;
+        handled = true;
+      }
+
       if (!handled) {
         recordSkip(stripped, 'alter_unparsed');
+      }
+    } else if (upper.startsWith('DROP') && /^DROP\s+TABLE\b/i.test(stripped)) {
+      // DROP TABLE — emitted as a structured op so the backend can cascade-delete
+      // the table and its columns/constraints/indexes. (Other DROP <object> forms
+      // are still handled by the backend's regex delta pass.)
+      const dropTbl = parseDropTable(stripped);
+      if (dropTbl) {
+        const tbl = tableMap[dropTbl.tableName]
+          || (dropTbl.schema && tableMap[`${dropTbl.schema}.${dropTbl.tableName}`])
+          || null;
+        if (tbl) {
+          // Remove from the in-file snapshot too, so a same-file CREATE + DROP
+          // nets out to "table absent".
+          const idx = tables.indexOf(tbl);
+          if (idx !== -1) tables.splice(idx, 1);
+          delete tableMap[tbl.name];
+          if (tbl.fullName) delete tableMap[tbl.fullName];
+        }
+        alterOps.push({
+          op: 'dropTable',
+          schema: dropTbl.schema || null,
+          table: dropTbl.tableName,
+        });
+        parseReport.parsed++;
+        parseReport.byKind.dropTable++;
+      } else {
+        recordSkip(stripped, 'drop_unparsed');
+      }
+    } else if (upper.startsWith('RENAME')) {
+      // Legacy Oracle table rename: `RENAME old TO new` (current schema only).
+      const renamLegacy = parseRenameTableLegacy(stripped);
+      if (renamLegacy) {
+        const tbl = tableMap[renamLegacy.oldName] || null;
+        if (tbl) {
+          delete tableMap[tbl.name];
+          if (tbl.fullName) delete tableMap[tbl.fullName];
+          tbl.name = renamLegacy.newName;
+          tbl.fullName = tbl.schema ? `${tbl.schema}.${renamLegacy.newName}` : renamLegacy.newName;
+          tableMap[tbl.name] = tbl;
+          if (tbl.schema) tableMap[tbl.fullName] = tbl;
+        }
+        alterOps.push({
+          op: 'renameTable',
+          schema: null,
+          oldName: renamLegacy.oldName,
+          newName: renamLegacy.newName,
+        });
+        parseReport.parsed++;
+        parseReport.byKind.alterRenameTable++;
+      } else {
+        recordSkip(stripped, 'rename_unparsed');
       }
     } else {
       recordSkip(stripped, 'unrecognized_statement');
@@ -1599,6 +2050,24 @@ function parseOracleDDL(ddlText) {
     if (t.indexes) t.indexes.sort((a, b) => indexKey(a).localeCompare(indexKey(b)));
   }
 
+  // A table CREATEd in THIS file already has its ALTERs folded into `tables`
+  // (the snapshot), which the backend MERGEs directly. Emitting alterOps for
+  // those too would make the ingest replay them redundantly (idempotent, but
+  // wasted writes + noisy "already applied" logs). So emit alterOps only for
+  // objects NOT created in this file — the true deltas against the existing
+  // graph (e.g. an ALTER-only change feed, or an ALTER on a pre-existing table
+  // in a mixed migration file).
+  const inFileTables = new Set();
+  for (const t of tables) {
+    inFileTables.add(t.name.toLowerCase());
+    if (t.fullName) inFileTables.add(t.fullName.toLowerCase());
+  }
+  const deltaAlterOps = alterOps.filter(op => {
+    // renameTable ends up in `tables` under its new name; everything else keys on op.table.
+    const target = op.op === 'renameTable' ? op.newName : op.table;
+    return target ? !inFileTables.has(target.toLowerCase()) : true;
+  });
+
   return {
     tables,
     views,
@@ -1606,6 +2075,7 @@ function parseOracleDDL(ddlText) {
     indexes: standaloneIndexes,
     allIndexes: indexes,
     sequences,
+    alterOps: deltaAlterOps,
     parseReport,
   };
 }

@@ -737,6 +737,11 @@ app.post("/api/analyze-sql", sqlUpload.single("file"), async (req, res) => {
   try {
     const { projectUuid, dataLakeId, repositoryName } = req.body || {};
     const llmPlatform = req.query.llmPlatform || req.body?.llmPlatform || "AWSBEDROCK";
+    // Optional dialect override. Auto-detection needs dialect-specific tokens; a
+    // bare delta statement (e.g. `ALTER TABLE … RENAME COLUMN …`) has none and
+    // falls back to the generic parser (no alterOps). Callers that know the
+    // source dialect (e.g. the Oracle RDS-changes feed) pass it explicitly.
+    const dialect = (req.query.dialect || req.body?.dialect || "").toString().trim().toLowerCase() || undefined;
 
     console.log(
       `🌐 [analyze-sql] ← request: projectUuid=${projectUuid || "<missing>"}, ` +
@@ -762,14 +767,15 @@ app.post("/api/analyze-sql", sqlUpload.single("file"), async (req, res) => {
     const fileName = req.file.originalname || "uploaded.sql";
     const ddlText = req.file.buffer.toString("utf-8");
 
-    console.log(`🌐 [analyze-sql] parsing ${fileName} (${ddlText.length} chars)…`);
+    console.log(`🌐 [analyze-sql] parsing ${fileName} (${ddlText.length} chars)… dialect=${dialect || "auto"}`);
     const parseStart = Date.now();
-    const parsed = parseDDL(ddlText, { filePath: fileName });
+    const parsed = parseDDL(ddlText, { filePath: fileName, dialect });
     const sequences = parsed.sequences || [];
+    const alterOps = parsed.alterOps || [];
     console.log(
       `🌐 [analyze-sql] parse done in ${Date.now() - parseStart}ms — ` +
       `dialect=${parsed.dialect}, tables=${parsed.tables.length}, views=${parsed.views.length}, ` +
-      `procedures=${parsed.procedures.length}, indexes=${parsed.allIndexes.length}, sequences=${sequences.length}` +
+      `procedures=${parsed.procedures.length}, indexes=${parsed.allIndexes.length}, sequences=${sequences.length}, alterOps=${alterOps.length}` +
       (parsed.parseReport
         ? ` | parseReport: ${parsed.parseReport.parsed}/${parsed.parseReport.totalStatements} parsed, ${parsed.parseReport.skipped} skipped`
         : "") +
@@ -783,7 +789,8 @@ app.post("/api/analyze-sql", sqlUpload.single("file"), async (req, res) => {
       parsed.views.length === 0 &&
       parsed.procedures.length === 0 &&
       parsed.allIndexes.length === 0 &&
-      sequences.length === 0
+      sequences.length === 0 &&
+      alterOps.length === 0
     ) {
       console.warn(`🌐 [analyze-sql] ✗ no DDL objects extracted from ${fileName} (dialect=${parsed.dialect})`);
       return res.status(422).json({
@@ -803,6 +810,7 @@ app.post("/api/analyze-sql", sqlUpload.single("file"), async (req, res) => {
       procedures: parsed.procedures,
       indexes: parsed.allIndexes,
       sequences,
+      alterOps,
     };
     if (parsed.parseReport) record.parseReport = parsed.parseReport;
 
@@ -850,6 +858,7 @@ app.post("/api/analyze-sql", sqlUpload.single("file"), async (req, res) => {
       procedureCount: parsed.procedures.length,
       indexCount: parsed.allIndexes.length,
       sequenceCount: sequences.length,
+      alterOpCount: alterOps.length,
       message: "SQL parsed, NDJSON.gz streamed to S3, ingestion notification sent.",
     });
   } catch (err) {
