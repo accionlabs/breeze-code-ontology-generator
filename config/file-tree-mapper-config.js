@@ -19,7 +19,7 @@ const CONFIG_PATTERNS = {
   xml: ["*.xml", "pom.xml"],
   python: ["requirements.txt", "setup.py", "Pipfile"],
   gradle: ["build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"],
-  other: [".gitignore", ".dockerignore", "Makefile", "README.md", "README.rst", "LICENSE"]
+  other: [".gitignore", ".dockerignore", "Makefile", "LICENSE"]
 };
 
 /**

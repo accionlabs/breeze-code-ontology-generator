@@ -93,6 +93,14 @@ specs/
 /samples/
 /demo/
 
+# Markdown / README docs (not code — excluded from ingestion)
+*.md
+*.markdown
+*.mdx
+*.rst
+README
+README.*
+
 ################################################
 # BINARY / STATIC ASSETS
 ################################################
