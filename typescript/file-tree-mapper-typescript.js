@@ -16,6 +16,7 @@ const { extractClasses } = require("./extract-classes-typescript");
 const { extractFileRoutes } = require("./extract-routes-typescript");
 const { attachRoutes } = require("../routes-js-core");
 const { loadPathAliases, resolveWithAlias } = require("./resolve-path-aliases");
+const { buildAngularMountPrefixes, joinMount } = require("./angular-route-mounts");
 const { getIgnorePatternsWithPrefix } = require("../ignore-patterns");
 
 // -------------------------------------------------------------
@@ -45,6 +46,18 @@ function analyzeTypeScriptFiles(repoPath, pathAliases, opts = {}) {
   const tsFiles = getTsFilesOnly(repoPath);
   const results = opts.onResult ? null : [];
   const totalFiles = tsFiles.length;
+
+  // Cross-file Angular lazy-mount composition: map routing files to the
+  // absolute prefix under which they are lazily mounted (parses only the few
+  // @angular/router files). Empty/{} for non-Angular repos.
+  let ngMountPrefixes = {};
+  if (opts.captureStatements) {
+    try {
+      ngMountPrefixes = buildAngularMountPrefixes(repoPath, tsFiles, pathAliases).prefixMap;
+    } catch (e) {
+      ngMountPrefixes = {};
+    }
+  }
 
   const spinnerFrames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏'];
   let spinnerIndex = 0;
@@ -176,6 +189,13 @@ function analyzeTypeScriptFiles(repoPath, pathAliases, opts = {}) {
       // Decorator routes (scope "function") attach to their handler method;
       // call-based routes (scope "file") attach to the File node.
       const routes = opts.captureStatements ? extractFileRoutes(file) : [];
+      // Prefix Angular routes with their lazy-mount path (cross-file compose).
+      const mountPrefix = ngMountPrefixes[path.relative(repoPath, file)];
+      if (mountPrefix) {
+        for (const r of routes) {
+          if (r.framework === "angular-router") r.path = joinMount(mountPrefix, r.path);
+        }
+      }
       attachRoutes(routes, functions, statements);
 
       const fileResult = {

@@ -118,6 +118,7 @@ function detectImports(root, source) {
     nest: has(/^@nestjs\//),
     loopback: has(/^@loopback\/rest$/),
     vueRouter: has(/^vue-router$/),
+    angularRouter: has(/^@angular\/router$/),
   };
 }
 
@@ -139,6 +140,7 @@ function makeRoute(fields) {
     guards: fields.guards || [],
     requestDTO: fields.requestDTO != null ? fields.requestDTO : null,
     responseDTO: fields.responseDTO != null ? fields.responseDTO : null,
+    dataLoaders: fields.dataLoaders || [],
     scope: fields.scope || "file",
     handlerLine: fields.handlerLine != null ? fields.handlerLine : null,
     text: (fields.text || `[${fields.framework}] ${method} ${endpoint}`).slice(0, MAX_TEXT),
@@ -695,6 +697,20 @@ function objectPairValue(source, objNode, key) {
   return null;
 }
 
+// Value symbols from an object literal: { a: X, b: () => ... } -> ["X", "() => ..."]
+// Used for Angular `resolve: { key: Resolver }` (an object, not a guard array).
+function objectValueSymbols(source, objNode) {
+  const out = [];
+  if (!objNode || objNode.type !== "object") return out;
+  for (let i = 0; i < objNode.namedChildCount; i++) {
+    const pair = objNode.namedChild(i);
+    if (pair.type !== "pair") continue;
+    const v = pair.childForFieldName("value");
+    if (v) out.push(text(source, v, 80));
+  }
+  return out;
+}
+
 // Resolve a `component` value to a name: Identifier, string, or lazy
 // () => import('./User.vue') -> "User.vue".
 function componentName(source, node) {
@@ -761,6 +777,138 @@ function extractVueRouterRoutes(root, source, fw) {
 }
 
 // -------------------------------------------------------------------
+// Angular Router (frontend): const routes: Routes = [{ path, component,
+// loadChildren, loadComponent, redirectTo, children, canActivate }].
+// Tagged method "VIEW", framework "angular-router". kind: "page" |
+// "lazy" (loadChildren module) | "redirect". Child paths are relative
+// (no leading slash) and are composed onto the parent path.
+// -------------------------------------------------------------------
+const ANGULAR_GUARD_KEYS = ["canActivate", "canActivateChild", "canMatch", "canLoad", "canDeactivate"];
+
+function joinAngularPath(base, child) {
+  base = base || "";
+  if (child == null || child === "") return base || "/";
+  const seg = child.startsWith("/") ? child.slice(1) : child;
+  const b = base.endsWith("/") ? base.slice(0, -1) : base;
+  return b + "/" + seg;
+}
+
+// Resolve loadChildren/loadComponent value to its exported symbol.
+// () => import('@x/m').then(m => m.XModule)  -> "XModule"
+// './x#XModule' (legacy string form)         -> "XModule"
+function angularLazyTarget(source, valueNode) {
+  const str = getString(source, valueNode);
+  if (str != null) {
+    const [, sym] = str.split("#");
+    return sym || str.replace(/^.*\//, ""); // export name, else module basename
+  }
+  let symbol = null;
+  traverse(valueNode, (x) => {
+    if (x.type !== "member_expression") return;
+    const obj = x.childForFieldName("object");
+    const prop = x.childForFieldName("property");
+    // m.XModule -> property of a member whose object is a plain identifier
+    if (obj && obj.type === "identifier" && prop) symbol = text(source, prop, 80);
+  });
+  return symbol;
+}
+
+// Identifier list from a guard array: [authGuard, RoleGuard] -> ["authGuard","RoleGuard"]
+function angularIdentList(source, node) {
+  const out = [];
+  if (!node || node.type !== "array") return out;
+  for (let i = 0; i < node.namedChildCount; i++) out.push(text(source, node.namedChild(i), 80));
+  return out;
+}
+
+function walkAngularRouteArray(source, arrayNode, basePath, out) {
+  for (let i = 0; i < arrayNode.namedChildCount; i++) {
+    const obj = arrayNode.namedChild(i);
+    if (obj.type !== "object") continue;
+    const p = getString(source, objectPairValue(source, obj, "path"));
+    if (p == null) continue; // skip matcher/componentless routes without a path
+    const full = joinAngularPath(basePath, p);
+    const li = { startLine: obj.startPosition.row + 1, endLine: obj.endPosition.row + 1 };
+
+    let guards = [];
+    for (const k of ANGULAR_GUARD_KEYS) {
+      guards = guards.concat(angularIdentList(source, objectPairValue(source, obj, k)));
+    }
+
+    // resolve: { profile: ProfileResolver } -> dataLoaders ["ProfileResolver"]
+    const dataLoaders = objectValueSymbols(source, objectPairValue(source, obj, "resolve"));
+
+    let kind = "page";
+    let handler = null;
+    const redirect = getString(source, objectPairValue(source, obj, "redirectTo"));
+    const loadChildren = objectPairValue(source, obj, "loadChildren");
+    const loadComponent = objectPairValue(source, obj, "loadComponent");
+    const component = objectPairValue(source, obj, "component");
+    if (redirect != null) {
+      kind = "redirect";
+      handler = "-> " + redirect;
+    } else if (loadChildren) {
+      kind = "lazy";
+      handler = angularLazyTarget(source, loadChildren);
+    } else if (loadComponent) {
+      handler = angularLazyTarget(source, loadComponent);
+    } else if (component && component.type === "identifier") {
+      handler = text(source, component, 80);
+    }
+
+    const title = getString(source, objectPairValue(source, obj, "title"));
+    out.push(makeRoute({
+      framework: "angular-router", method: "VIEW", path: full, kind,
+      handler, guards, authRequired: guards.length > 0, dataLoaders,
+      decorator: title || null, text: text(source, obj, 120), ...li,
+    }));
+
+    const children = objectPairValue(source, obj, "children");
+    if (children && children.type === "array") walkAngularRouteArray(source, children, full, out);
+  }
+}
+
+// const x: Routes = [...] / const x: Route[] = [...]
+function isRoutesTypedDecl(source, declaratorNode) {
+  for (let i = 0; i < declaratorNode.namedChildCount; i++) {
+    const c = declaratorNode.namedChild(i);
+    if (c.type === "type_annotation" && /\bRoutes?\b/.test(text(source, c, 60))) return true;
+  }
+  return false;
+}
+
+function extractAngularRoutes(root, source, fw) {
+  const out = [];
+  if (!fw.angularRouter) return out;
+  const arrays = new Set();
+  traverse(root, (n) => {
+    // const routes: Routes = [...]  (typed)  or  const routes = [...]  (named)
+    if (n.type === "variable_declarator") {
+      const name = n.childForFieldName("name");
+      const val = n.childForFieldName("value");
+      if (val && val.type === "array" &&
+          (isRoutesTypedDecl(source, n) || (name && text(source, name) === "routes"))) {
+        arrays.add(val);
+      }
+      return;
+    }
+    // RouterModule.forRoot([...]) / .forChild([...]) / provideRouter([...])
+    if (n.type === "call_expression") {
+      const fn = n.childForFieldName("function");
+      if (!fn) return;
+      const isReg =
+        (fn.type === "member_expression" && ["forRoot", "forChild"].includes(memberProperty(source, fn))) ||
+        (fn.type === "identifier" && text(source, fn) === "provideRouter");
+      if (!isReg) return;
+      const arg = firstArg(n);
+      if (arg && arg.type === "array") arrays.add(arg);
+    }
+  });
+  for (const arr of arrays) walkAngularRouteArray(source, arr, "", out);
+  return out;
+}
+
+// -------------------------------------------------------------------
 // Public entry
 // -------------------------------------------------------------------
 function extractRoutesFromTree(source, tree) {
@@ -771,6 +919,7 @@ function extractRoutesFromTree(source, tree) {
     ...extractDecoratorRoutes(root, source, fw),
     ...extractLoopbackRoutes(root, source, fw),
     ...extractVueRouterRoutes(root, source, fw),
+    ...extractAngularRoutes(root, source, fw),
   ];
   routes.sort((a, b) => a.startLine - b.startLine || a.endLine - b.endLine);
   return routes;

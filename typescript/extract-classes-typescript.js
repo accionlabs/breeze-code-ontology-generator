@@ -27,11 +27,48 @@ function extractClasses(filePath, repoPath = null, captureStatements = false) {
 
 const CLASS_STATEMENT_TYPES = ["lexical_declaration", "variable_declaration", "public_field_definition", "enum_declaration", "decorator"];
 
+function decoratorName(dec, source) {
+  // dec is a `decorator` node: `@Name` or `@Name(...)` or `@ns.Name(...)`.
+  const inner = dec.namedChild(0);
+  if (!inner) return null;
+  if (inner.type === "call_expression") {
+    const fn = inner.childForFieldName("function");
+    if (fn) return source.slice(fn.startIndex, fn.endIndex);
+  }
+  return source.slice(inner.startIndex, inner.endIndex);
+}
+
+function extractClassDecorators(node, source) {
+  // Class-level decorators (@Component, @NgModule, @Injectable, ...) are not
+  // inside the class body: for an exported class they are siblings of the
+  // class node within the `export_statement`; for a bare class they are
+  // direct children of the class node before the `class` keyword. Collect both.
+  const statements = [];
+  const seen = new Set();
+  const add = (dec) => {
+    if (!dec || dec.type !== "decorator" || seen.has(dec.startIndex)) return;
+    seen.add(dec.startIndex);
+    statements.push({
+      type: "decorator",
+      name: decoratorName(dec, source),
+      text: source.slice(dec.startIndex, dec.endIndex),
+      startLine: dec.startPosition.row + 1,
+      endLine: dec.endPosition.row + 1,
+    });
+  };
+  for (let i = 0; i < node.childCount; i++) add(node.child(i));
+  const parent = node.parent;
+  if (parent && parent.type === "export_statement") {
+    for (let i = 0; i < parent.childCount; i++) add(parent.child(i));
+  }
+  return statements;
+}
+
 function extractClassStatements(node, source) {
   const body = node.childForFieldName("body");
   if (!body) return [];
 
-  const statements = [];
+  const statements = extractClassDecorators(node, source);
   for (let i = 0; i < body.namedChildCount; i++) {
     const child = body.namedChild(i);
     if (!CLASS_STATEMENT_TYPES.includes(child.type)) continue;
